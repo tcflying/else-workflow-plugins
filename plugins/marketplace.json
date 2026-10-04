@@ -1,0 +1,18 @@
+{
+  "name": "dev-else-177d1fad",
+  "plugins": [
+    {
+      "name": "dynamic-workflow",
+      "source": "./dynamic-workflow",
+      "version": "0.8.0",
+      "description": "Write a throwaway orchestration script, fan the work out across isolated subagents, keep the intermediate output out of the main context.",
+      "displayName": "Dynamic Workflows",
+      "displayName_i18n": {
+        "zh-CN": "动态工作流"
+      },
+      "description_i18n": {
+        "zh-CN": "写一次性编排脚本，把工作扇出给多个隔离子代理，中间结果不进入主会话上下文。"
+      }
+    }
+  ]
+}

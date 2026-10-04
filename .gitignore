@@ -1,0 +1,25 @@
+# 白名单式：根下仅收录工程交付物，其余（临时脚本/诊断/截图/工具状态）一律不入库
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/1004.md
+!/workflow-ui-v2-SPEC.md
+!/mmx-workflow-pipeline
+!/dsh-workflow-pipeline
+!/plugins
+!/workflow-pipeline-guide
+
+# 工具运行态（任何深度）
+.mimosa/
+.qoder/
+.zcode/
+.claude/
+
+# 运行日志不入库（含历史 sidecar 日志）
+*.log
+
+# Windows 保留设备名与系统杂物
+nul
+Thumbs.db
+.DS_Store
