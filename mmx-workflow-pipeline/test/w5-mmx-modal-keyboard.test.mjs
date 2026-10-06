@@ -107,12 +107,14 @@ test('F07 MMX: Escape works from anywhere inside the dialog, not only from the c
 });
 
 test('F07 MMX: Tab and Shift+Tab wrap inside the dialog instead of escaping to the host', async () => {
-  const f = await boot('mmx', { runs: [run('f07-tab', 'completed')] });
+  // Two runs, so the history dialog has at least three focusable controls and the "middle" one
+  // this test exercises really is an interior control rather than an edge the trap owns.
+  const f = await boot('mmx', { runs: [run('f07-tab-a', 'completed'), run('f07-tab-b', 'completed')] });
   try {
-    f.doc.querySelector('[data-run="f07-tab"]').querySelectorAll('[data-act="history"]')[0].dispatch('click');
+    f.doc.querySelector('[data-run="f07-tab-a"]').querySelectorAll('[data-act="history"]')[0].dispatch('click');
     await f.flush();
     const items = focusable(f);
-    assert.ok(items.length >= 2, 'the history dialog has several focusable controls');
+    assert.ok(items.length >= 3, 'the history dialog has several focusable controls; order was ' + describeFocus(items));
 
     // Tab off the LAST control wraps to the first rather than leaving the dialog.
     items[items.length - 1].focus();
@@ -245,20 +247,29 @@ test('F07 MMX: the toggle expands the call list and keeps aria-expanded in step'
 });
 
 test('F07 MMX: the bind buttons next to the row still work and never toggle the call list', async () => {
-  // The row and its new button share one click path, so the existing "don't toggle when a bind
-  // control was clicked" guard has to keep working.
-  const f = await boot('mmx', { runs: [run('f07-bind', 'completed')] });
+  // The row and its bind button share one click path, so the existing "don't toggle when a bind
+  // control was clicked" guard has to keep working. A persisted manual binding is what renders a
+  // bind control without a current session, so the guard is exercised on 解除绑定.
+  const f = await boot('mmx', {
+    runs: [run('f07-bind', 'completed')],
+    storage: new Map([['mmxdwf-session-bindings', JSON.stringify({
+      'f07-bind': { host: 'mmx', source: 'mmx-oneclick', sessionId: 'sess-f07' },
+    })]]),
+  });
   try {
     f.doc.querySelector('[data-run="f07-bind"]').querySelectorAll('[data-act="history"]')[0].dispatch('click');
     await f.flush();
-    const bind = f.doc.querySelector('[data-act="bindpick"]');
+    const bind = f.doc.querySelector('[data-act="unbindcurrent"]');
     assert.ok(bind, 'the row still offers a bind control');
+    const toggle = f.doc.querySelector('[data-act="htoggle"]');
+    const calls = f.doc.querySelector('.mmxdwf-hcalls');
     bind.dispatch('click');
     await f.flush();
-    const picker = f.doc.querySelector('.mmxdwf-pickhead');
-    if (picker) {
-      assert.equal(f.doc.querySelectorAll('.mmxdwf-hcalls').length, 0, 'opening the picker did not expand anything');
-    }
+    assert.equal(f.doc.querySelectorAll('.mmxdwf-hcalls').length, 1, 'the bind control did not add a call list of its own');
+    assert.equal(f.doc.querySelector('.mmxdwf-hcalls').style.display, 'none', 'and it did not expand the existing one');
+    assert.equal(f.doc.querySelector('[data-act="htoggle"]').getAttribute('aria-expanded'), 'false');
+    assert.equal(f.doc.querySelector('[data-act="unbindcurrent"]'), null, 'the bind actually happened');
+    assert.ok(toggle && calls, 'the row and its call list were still there to be guarded');
   } finally { f.stop(); }
 });
 

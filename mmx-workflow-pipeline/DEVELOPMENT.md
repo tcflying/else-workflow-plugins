@@ -19,7 +19,7 @@
 ```text
 MiniMax renderer (app://./archon)
   client-inject.js
-    ├─ 卡片、侧栏、四种详情、中文回答/恢复状态
+    ├─ 卡片、四种详情、中文回答/恢复状态（侧栏注入已于 2026-10-07 移除）
     ├─ 2s 轮询 GET /runs
     └─ fetch 127.0.0.1:4231
                 │
@@ -106,7 +106,7 @@ JSON body 必须含非空字符串 `answer`。运行需有效 running、qId 合�
 - `mmxdwf-visible-runs` 和 `mmxdwf-dismissed` 保存已显示卡和手动关闭卡，不按时间、200 条阈值淘汰。
 - 初始选择所有 live run + 最新未关闭终态；以前已经显示的终态额外保留。运行数据离开扫描根时仍会消失；这不是本地历史数据备份。
 - 普通草稿、焦点、请求 pending 不跨 document 持久化，不能把卡片常驻误写成重载后草稿也恢复。
-- sidebar 按 startedAt 选择最新匹配项，无 TTL；标题子串/cwd basename 仍是近似关联，非 session ID 绑定。
+- ~~sidebar 按 startedAt 选择最新匹配项~~ **〔2026-10-07 已删除〕** sweepSidebar/sidebarSessions/会话选择器整体移除；`client-lifecycle.test.mjs` 有源码级回归锁（禁 `data-session-id`/`data-mmxdwf-line`/`bindpick`，sweep 仅剩 `sweepCard`+`sweepAll`）。
 
 ### 4.3 MiniMax 注入升级
 

@@ -55,3 +55,34 @@ test('flag helpers keep the contract local and reversible', () => {
   assert.equal(buildHostSessionFlag(''), null);
   assert.equal(buildHostSessionFlag('x'.repeat(300)), null);
 });
+
+// Regression: original four independent attribution-safety assertions, unchanged.
+const engine='G:/qoder-intl-project/else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs';
+const sid='mvs_00000000000000000000000000000001';
+async function patched(command){const value=await handle(JSON.stringify({hook_event_name:'PreToolUse',tool_name:'bash',session_id:sid,tool_input:{command}}));return value?JSON.parse(value).hookSpecificOutput.updatedInput.command:null;}
+test('single supported engine invocation gets exact native attribution',async()=>{
+ const out=await patched(`node "${engine}" run fixture.js`);assert(out.includes('--host-session '));
+ const token=out.split('--host-session ')[1];assert.deepEqual(JSON.parse(Buffer.from(token,'base64url').toString()),{host:'mmx',sessionId:sid,source:'native-hook'});
+});
+test('compound command must decline or attribute the engine, never append to echo',async()=>{
+ const out=await patched(`node "${engine}" run fixture.js && echo done`);
+ assert(out===null||out.split('&&')[0].includes('--host-session '),'actual helper appends only after echo; engine argv misses attribution');
+});
+test('trailing comment must decline or keep attribution outside comment',async()=>{
+ const out=await patched(`node "${engine}" run fixture.js # local annotation`);
+ assert(out===null||out.split('#')[0].includes('--host-session '),'actual helper appends inside comment');
+});
+test('echo of exact engine path is not an engine invocation',async()=>{
+ assert.equal(await patched(`echo "${engine}" run fixture.js`),null);
+});
+
+test('narrow literal command grammar rejects shell syntax and keeps supported quoting', () => {
+  for (const suffix of [' | cat', ' ; echo done', ' > out.txt', '\n echo done', ' $(echo x)', ' `echo x`', ' --']) {
+    assert.equal(shouldAppendFlag(ENGINE_CMD + suffix), false, suffix);
+  }
+  assert.equal(shouldAppendFlag('node "G:/wrong' + engine + '" run x'), false);
+  assert.equal(shouldAppendFlag(ENGINE_CMD + ' "--host-session=X"'), false);
+  assert.equal(shouldAppendFlag(ENGINE_CMD + ' "unterminated'), false);
+  assert.equal(shouldAppendFlag("node '" + engine + "' run 'fixture with spaces.js'"), true);
+  assert.equal(shouldAppendFlag(ENGINE_CMD.replace('node ', 'node.exe ')), true);
+});

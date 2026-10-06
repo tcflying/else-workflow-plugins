@@ -26,18 +26,20 @@ export function buildHostSessionFlag(sessionId) {
   return '--host-session ' + Buffer.from(JSON.stringify({ host: 'mmx', sessionId, source: 'native-hook' })).toString('base64url');
 }
 
-// A command qualifies only when it invokes this exact engine with the `run` subcommand and does
-// not already carry a --host-session flag. Path separators and quoting are normalised for the
-// comparison only; the original command text is preserved byte-for-byte otherwise.
+// Only a single, literal `node <exact engine> run ...` command is supported.
+// Decline shell composition, comments, expansion and escaping rather than attaching attribution
+// to another command. This is a narrow argv recognizer, not a general shell parser. Quoted
+// literal arguments and the engine's existing case/path-separator matching remain supported.
 export function shouldAppendFlag(command) {
   if (typeof command !== 'string' || command.length > 8192) return false;
-  const normalized = command.toLowerCase().replace(/\//g, '\\');
-  if (!normalized.includes(ENGINE_RESOLVED.replace(/\//g, '\\'))) return false;
-  if (/(^|\s)-{1,2}host-session(\s|=)/.test(command)) return false;
-  // The engine path is usually quoted, so the subcommand follows the closing quote: wf.mjs" run.
-  const tail = command.slice(command.toLowerCase().lastIndexOf('wf.mjs') + 'wf.mjs'.length);
-  const next = tail.trimStart().match(/^["']?\s*([A-Za-z_-]+)/);
-  return !!next && next[1] === 'run';
+  if (/[&|;<>\r\n`$#()]/.test(command) || command.includes('\\"')) return false;
+  const literal = /^(?:"[^"]*"|'[^']*'|[^\s"'\\]+)(?:[ \t]+(?:"[^"]*"|'[^']*'|[^\s"'\\]+))*$/;
+  if (!literal.test(command.trim())) return false;
+  const args = command.trim().match(/"[^"]*"|'[^']*'|[^\s"']+/g)
+    .map((arg) => /^["']/.test(arg) ? arg.slice(1, -1) : arg);
+  if (!/^node(?:\.exe)?$/i.test(args[0]) || args[2] !== 'run') return false;
+  if (args[1]?.toLowerCase().replace(/\\/g, '/') !== ENGINE_RESOLVED) return false;
+  return !args.some((arg) => arg === '--' || /^--?host-session(?:=|$)/.test(arg));
 }
 
 export function appendFlag(command, flag) {

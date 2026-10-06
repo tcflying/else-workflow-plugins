@@ -1,5 +1,10 @@
 # else-workflow-plugins
 
+
+<!-- project-evidence-rules:20261006 -->
+> 开发与验收接续：先读 [本目录 AGENTS](./AGENTS.md) 的“每轮推进与独立验收铁律”。每项目每轮记录真实推进/局部阻塞、原始证据、实际验证和未测边界；已授权下一步同步执行，旧证据不冒充新增，自报 PASS 不作为独立验收。失败/阻塞可诚实收束，不要求轮轮成功。统一 task 规范与证据 CLI 的本机路径、加载范围和无 Stop Hook 限制见该入口。
+<!-- /project-evidence-rules:20261006 -->
+
 MiniMax Code（MMX）与 DSH 双端实时工作流插件工程：两端各一个注入客户端 + 一个本地编排 Host，共享同一套文件后端引擎 `wf.mjs`（0.8.1），外加 MMX 原生会话 Hook 插件。
 
 > 语言：中文（README）。代码注释与测试名以英文为主。

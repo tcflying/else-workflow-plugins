@@ -351,7 +351,6 @@ test('client-inject.js carries the idempotency marker and mmxdwf- prefix', () =>
   assert.match(src, /mmxdwf-dismissed/);
   assert.match(src, /http:\/\/127\.0\.0\.1:4231/);
   // D1 selectors + home-screen fallback
-  assert.match(src, /\[data-session-id\]/);
   assert.match(src, /\[data-testid="message-list"\]/);
   assert.match(src, /mavis-home-content/);
   assert.match(src, /data-shortcut-session-active="true"/);

@@ -30,8 +30,10 @@
 //      sessionStorage (not localStorage), and "local store" means the local conversation SOURCE.
 //
 // These tests keep F01's guards, quoted from 1004.md §4 W4:
-//   "cloud 身份不明确时 fail-closed 并保留 picker"  -> cases 2 and 3: no one-click bind surface
-//      appears, the explicit session picker stays, and nothing is guessed from titles or cwd.
+//   "cloud 身份不明确时 fail-closed"  -> cases 2 and 3: no one-click bind surface appears and
+//      nothing is guessed from titles or cwd. The explicit session picker that used to sit behind
+//      that guard is gone with the host session list, so the guard is now absolute: with no
+//      verifiable current session there is no bind control at all and nothing is written.
 //   "不猜标题/cwd"  -> the cloud id only ever comes from the host's own DOM marker; no fallback
 //      in this file (or in the client) reads a title, a cwd or a row order.
 //   "不无条件把所有 DOM marker 提到最高优先级"  -> case 4: with the local source the host state
@@ -107,9 +109,10 @@ test('F01: under the cloud source the leftover local persisted id is not the cur
   } finally { api.stop(); }
 });
 
-test('F01: cloud identity unresolvable fails closed and keeps the explicit picker', async () => {
-  // Same leftover local key, but the active cloud row is not rendered (collapsed / virtualized):
-  // there is no verifiable cloud current session, so nothing may be written.
+test('F01: cloud identity unresolvable fails closed with no bind control at all', async () => {
+  // Same leftover local key, but the active cloud session is not rendered (collapsed / virtualized):
+  // there is no verifiable cloud current session, so nothing may be written and nothing may offer
+  // to write it.
   const api = await boot('mmx', {
     runs: [run('w4-failclosed', 'running')],
     storage: new Map([[SOURCE_KEY, 'cloud']]),
@@ -123,8 +126,8 @@ test('F01: cloud identity unresolvable fails closed and keeps the explicit picke
       'an unresolvable cloud current session is reported as absent, never as the local leftover');
     assert.equal(inCard(api, 'w4-failclosed', 'bind'), null,
       'no one-click bind surface is offered: the fail-closed path writes no attribution');
-    const pick = inCard(api, 'w4-failclosed', 'bindpick');
-    assert.ok(pick, 'the explicit session picker is preserved — the user can still attribute deliberately');
+    assert.equal(inCard(api, 'w4-failclosed', 'bindpick'), null,
+      'and no alternative bind control replaces it — the guard is now absolute');
     assert.equal(bindingOf(api)['w4-failclosed'], undefined, 'nothing was written');
   } finally { api.stop(); }
 });

@@ -29,7 +29,6 @@
 	var POLL_MS = 2000;
 	var NS = 'mmxdwf';
 	var CARD_ID = 'mmxdwf-run-card';
-	var LINE_ATTR = 'mmxdwf-line'; // DOM attribute: data-mmxdwf-line
 	var DISMISS_KEY = 'mmxdwf-dismissed';
 	var VISIBLE_KEY = 'mmxdwf-visible-runs';
 	var BINDINGS_KEY = 'mmxdwf-session-bindings';
@@ -39,10 +38,6 @@
 	var API = 'http://127.0.0.1:4231';
 
 	// D1-measured selectors (docs/dom-probe.md, MMX-310-SESSION-MARKERS.md) ----
-	var SESSION_ROW_SEL = '[data-session-id]';                     // sidebar session row container
-	var SESSION_TITLE_SEL = 'span.w-0.flex-1.text-sm.truncate';    // title span inside a row
-	var SESSION_ID_ATTR = 'data-session-id';
-	var SIDEBAR_LINE_SEL = '[data-mmxdwf-line]';                   // our own injected progress line
 	// Conversation scroll host. The home route (new conversation) is positively identified by
 	// mavis-home-content with no message-list; it never carries conversation cards (024-R4).
 	var CONVERSATION_SEL = '[data-testid="message-list"]';
@@ -201,10 +196,10 @@
 
 	// ---------- session adapter ----------
 	// The host writes the active session id into its own per-tab session state
-	// (sessionStorage['mavis:activeSessionId'], measured on 3.1.0) and the sidebar row of that
-	// session is additionally marked in the DOM. sessionStorage is the FIRST source because it
-	// is the current-session state itself: the DOM marker only exists while the active row is
-	// actually rendered, so it can be missing (row collapsed) or stale (virtualized list) and
+	// (sessionStorage['mavis:activeSessionId'], measured on 3.1.0) and additionally marks the
+	// active session in the DOM. sessionStorage is the FIRST source because it is the
+	// current-session state itself: the DOM marker only exists while the active element is
+	// actually rendered, so it can be missing (collapsed) or stale (virtualized list) and
 	// would make the one-click surfaces flicker on and off. When the two disagree the host's
 	// state wins. A missing key, an unreadable storage, or a value that is not a session id
 	// counts as "not available" — we fall back to the DOM marker and, failing that, return ''
@@ -225,9 +220,9 @@
 	// localStorage, 'local' | 'cloud'). The desktop build's own default when that key is absent
 	// is "local", so an unreadable/absent source keeps the previous behaviour untouched; only a
 	// VERIFIED cloud source changes which source is applicable, and then the persisted key is
-	// dropped rather than trusted: the DOM marker (still the host telling us which row is active)
-	// answers, and with no marker we return '' and fail closed — no one-click bind surface, the
-	// explicit picker untouched, nothing derived from a title or a cwd.
+	// dropped rather than trusted: the DOM marker (still the host telling us which session is
+	// active) answers, and with no marker we return '' and fail closed — no bind surface at all,
+	// nothing derived from a title or a cwd.
 	var ACTIVE_SESSION_KEY = 'mavis:activeSessionId';
 	var SOURCE_KEY = 'mavis.conversationSource';
 	var SESSION_ID_RE = /^mvs_[0-9a-f]{32}$/;
@@ -265,9 +260,10 @@
 			if (!manual || typeof manual.sessionId !== 'string') return null;
 			// v9: read the origin the record carries instead of synthesizing host:'mmx' on every
 			// read. A record without host/source predates the field; the storage key belongs to
-			// this client alone and its only writer was the session picker, so those stay valid.
-			// A record that names a DIFFERENT origin is not ours and is ignored outright — it must
-			// not be relabelled as an mmx picker binding (foreign attribution stays isolated).
+			// this client alone and its only writer was this client's own explicit bind control,
+			// so those stay valid. A record that names a DIFFERENT origin is not ours and is
+			// ignored outright — it must not be relabelled as one of our own bindings (foreign
+			// attribution stays isolated).
 			if (manual.host == null && manual.source == null) return { host: 'mmx', sessionId: manual.sessionId, source: 'mmx-picker' };
 			if (manual.host !== 'mmx' || (manual.source !== 'mmx-picker' && manual.source !== 'mmx-oneclick')) return null;
 			return { host: manual.host, sessionId: manual.sessionId, source: manual.source };
@@ -277,110 +273,16 @@
 		// v8: persist the attribution shape the contract names ({host, source}) — the
 		// record used to carry only {sessionId, runId, name}, so 'mmx' was synthesized
 		// on read and the origin of a binding was indistinguishable on disk.
-		// v10: the record now names WHICH deliberate action produced it. Both entry points are
-		// explicit user actions, so both are legitimate attribution — but stamping a one-click
-		// bind as 'mmx-picker' was false provenance on disk.
+		// v10: the record names WHICH deliberate action produced it, so a one-click bind
+		// is never stamped with the older 'mmx-picker' provenance (still accepted on read).
 		bindings[identity(run)] = { host: 'mmx', source: source === 'mmx-oneclick' ? 'mmx-oneclick' : 'mmx-picker', sessionId: String(sid), runId: run.runId || '', name: run.name || '', savedAt: new Date().toISOString() };
 		saveBindings();
-		try { sweepSidebar(); } catch (e) {}
 		try { sweepCard(); } catch (e) {}
 	}
-	// 024-R4 续: the sidebar rows themselves carry a stable data-session-id, so the user can
-	// name the session explicitly — that is still a deliberate user action, never a guess,
-	// which is the whole point of the attribution contract. It is also the ONLY entry on a
-	// host that exposes no verifiable current session at all.
-	function sidebarSessions() {
-		var out = [];
-		var seen = {};
-		document.querySelectorAll(SESSION_ROW_SEL).forEach(function (row) {
-			var sid = (row.getAttribute && row.getAttribute(SESSION_ID_ATTR)) || '';
-			if (!sid || seen[sid]) return;
-			seen[sid] = 1;
-			// Prefer the dedicated title span; fall back to the row text minus our own
-			// injected progress line, so a bound row reads as its title, not
-			// "标题⑂阶段点 阶段名" (v8: textContent alone polluted every picker entry).
-			var clone = null;
-			try { clone = row.cloneNode(true); } catch (e) { clone = null; }
-			var title = '';
-			if (clone) {
-				var mine = clone.querySelectorAll ? clone.querySelectorAll(SIDEBAR_LINE_SEL) : [];
-				for (var i = 0; i < mine.length; i++) { if (mine[i].parentNode) mine[i].remove(); }
-				var span = clone.querySelector ? clone.querySelector(SESSION_TITLE_SEL) : null;
-				title = ((span && span.textContent) || clone.textContent || '').replace(/\s+/g, ' ').trim();
-			} else {
-				var span2 = row.querySelector ? row.querySelector(SESSION_TITLE_SEL) : null;
-				title = ((span2 && span2.textContent) || sid).replace(/\s+/g, ' ').trim();
-			}
-			out.push({ sessionId: sid, title: title || sid });
-		});
-		return out;
-	}
-	// Where the picker was opened from decides what a completed bind does: a picker opened from
-	// a global-history row returns to that list (the user keeps the runs they were working
-	// through), a picker opened from a card foot closes the modal and leaves the conversation
-	// card, whose sidebar line is now painted.
-	var pickerFromHistory = false;
-	function openSessionPicker(run, fromHistory) {
-		var rid = identity(run);
-		beginView('bindpick', rid);
-		pickerFromHistory = !!fromHistory;
-			mTitle.textContent = '绑定到会话 · ' + (run.name || rid);
-			mBody.innerHTML = '';
-			var list = sidebarSessions();
-			if (!list.length) {
-				mBody.innerHTML = '<div class="mmxdwf-stats">没有可绑定的会话（侧栏未列出任何带 data-session-id 的会话行）</div>';
-				return;
-			}
-			// A real sidebar carries hundreds of rows (measured: 517 on 3.1.0), so the picker filters
-			// as you type instead of dumping the whole history. Matching is case-insensitive over the
-			// title and the session id, and the counter says which subset is on screen.
-			var head = document.createElement('div');
-			head.className = 'mmxdwf-stats mmxdwf-pickhead';
-			mBody.appendChild(head);
-			var filter = document.createElement('input');
-			filter.className = 'mmxdwf-filter';
-			filter.type = 'search';
-			filter.placeholder = '筛选会话（标题或 ID）';
-			filter.autocomplete = 'off';
-			mBody.appendChild(filter);
-			var rows = document.createElement('div');
-			rows.className = 'mmxdwf-srows';
-			mBody.appendChild(rows);
-			var none = document.createElement('div');
-			none.className = 'mmxdwf-stats mmxdwf-picknone';
-			none.textContent = '没有匹配「' + '' + '」的会话';
-			none.style.display = 'none';
-			mBody.appendChild(none);
-			function paint() {
-				var q = (filter.value || '').replace(/\s+/g, ' ').trim().toLowerCase();
-				rows.innerHTML = '';
-				var shown = 0;
-				list.forEach(function (s) {
-					if (q && s.title.toLowerCase().indexOf(q) < 0 && s.sessionId.toLowerCase().indexOf(q) < 0) return;
-					var row = document.createElement('button');
-					row.className = 'mmxdwf-srow';
-					row.setAttribute('data-act', 'bindpickrow');
-					row.setAttribute('data-sid', s.sessionId);
-					row.setAttribute('data-run', rid);
-					row.type = 'button';
-					row.textContent = s.title;
-					row.title = s.sessionId;
-					rows.appendChild(row);
-					shown++;
-				});
-				head.textContent = '选择这个运行要归属的会话 · ' + (q ? shown + ' / ' + list.length : '共 ' + list.length + ' 个');
-				none.textContent = '没有匹配「' + (filter.value || '').replace(/\s+/g, ' ').trim() + '」的会话';
-				none.style.display = shown ? 'none' : 'block';
-			}
-			filter.addEventListener('input', paint);
-			paint();
-			try { filter.focus(); } catch (e) {}
-		}
 	function unbindRun(run) {
 		if (!run || run.hostSession != null) return;
 		delete bindings[identity(run)];
 		saveBindings();
-		try { sweepSidebar(); } catch (e) {}
 		try { sweepCard(); } catch (e) {}
 	}
 
@@ -456,14 +358,6 @@
 		+ '@keyframes mmxdwf-fadein{from{opacity:0;transform:translateY(-3px);}to{opacity:1;transform:none;}}'
 		+ '@keyframes mmxdwf-shake{0%,100%{transform:translateX(0);}25%{transform:translateX(-4px);}75%{transform:translateX(4px);}}'
 		+ '@keyframes mmxdwf-pulse{0%{box-shadow:0 0 0 0 rgba(255,159,10,.4);}70%{box-shadow:0 0 0 8px rgba(255,159,10,0);}100%{box-shadow:0 0 0 0 rgba(255,159,10,0);}}'
-		+ '[data-' + LINE_ATTR + ']{flex-basis:100%;display:flex;align-items:center;gap:7px;padding:1px 2px 3px 21px;margin-top:1px;font-size:11px;color:var(--wf-muted);min-width:0;}'
-		+ '[data-' + LINE_ATTR + '] .mmxdwf-fork{color:#5c606a;font-size:10px;flex:none;}'
-		+ '[data-' + LINE_ATTR + '] .mmxdwf-dot{width:7px;height:7px;border-radius:50%;flex:none;background:#3a3d44;}'
-		+ '[data-' + LINE_ATTR + '] .mmxdwf-dot.done{background:var(--wf-success);}'
-		+ '[data-' + LINE_ATTR + '] .mmxdwf-dot.now{background:var(--wf-accent);animation:mmxdwf-pulse 1.6s infinite;}'
-		+ '[data-' + LINE_ATTR + '] .mmxdwf-dot.failed{background:var(--wf-failure);}'
-		+ '[data-' + LINE_ATTR + '] .mmxdwf-dot.rejected,[data-' + LINE_ATTR + '] .mmxdwf-dot.partial{background:var(--wf-accent);}'
-		+ '[data-' + LINE_ATTR + '] .mmxdwf-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}'
 		+ '[data-mmxdwf-card] .mmxdwf-qzone{margin:12px 0 0;}'
 		+ '[data-mmxdwf-card] .mmxdwf-q.waiting{display:flex;gap:10px;align-items:center;background:rgba(255,159,10,.06);border:1px solid rgba(255,159,10,.28);border-left:3px solid var(--wf-accent);border-radius:10px;padding:9px 12px;flex-wrap:wrap;}'
 		+ '[data-mmxdwf-card] .mmxdwf-q.waiting .mmxdwf-qtext{font-size:12.5px;color:var(--wf-ask);flex:1 1 200px;min-width:0;}'
@@ -498,12 +392,6 @@
 		+ '#' + MODAL_ID + ' .mmxdwf-hid{color:var(--wf-muted);font-size:11px;}'
 		+ '#' + MODAL_ID + ' .mmxdwf-hmeta{margin-left:auto;color:var(--wf-muted);font-size:11px;white-space:nowrap;}'
 		+ '#' + MODAL_ID + ' .mmxdwf-hcalls{padding:4px 12px 10px;font-size:11.5px;color:var(--wf-muted);}'
-		+ '#' + MODAL_ID + ' .mmxdwf-srow{display:block;width:100%;text-align:left;font:12px/1.5 inherit;color:var(--wf-text);background:var(--wf-subtle);border:1px solid var(--wf-border);border-radius:10px;padding:9px 12px;margin:6px 0;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
-		+ '#' + MODAL_ID + ' .mmxdwf-srow:hover{color:var(--wf-strong);border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.065);}'
-		+ '#' + MODAL_ID + ' .mmxdwf-filter{display:block;width:100%;box-sizing:border-box;font:12px/1.5 inherit;color:var(--wf-strong);background:var(--wf-subtle);border:1px solid var(--wf-border);border-radius:10px;padding:8px 12px;margin:8px 0 4px;outline:none;}'
-		+ '#' + MODAL_ID + ' .mmxdwf-filter:focus{border-color:rgba(255,255,255,.28);}'
-		+ '#' + MODAL_ID + ' .mmxdwf-srows{max-height:min(52vh,420px);overflow-y:auto;overscroll-behavior:contain;margin-bottom:4px;}'
-		+ '#' + MODAL_ID + ' .mmxdwf-picknone{margin:10px 0 4px;}'
 		+ '#' + MODAL_ID + ' .mmxdwf-hbtn{font-size:11px;border:1px solid var(--wf-border);background:var(--wf-subtle);color:var(--wf-text);border-radius:8px;padding:3px 9px;cursor:pointer;flex:none;}'
 		+ '#' + MODAL_ID + ' .mmxdwf-hbtn:hover{color:var(--wf-strong);border-color:rgba(255,255,255,.22);}'
 		+ '#' + MODAL_ID + ' .mmxdwf-hbtn:disabled{opacity:.5;cursor:default;}'
@@ -518,8 +406,8 @@
 	// [data-mmxdwf-card] attribute of its own — it wraps N cards and must not inherit the card
 	// box. Without its own scope the theme variables and the notice/button rules below never
 	// match, and the P0-3 global-history entry renders as unstyled default browser controls.
-	CSS += '[data-mmxdwf-card],[data-mmxdwf-banner],#' + MODAL_ID + ',[data-mmxdwf-line],[data-' + NS + '-global-entry]{--wf-text:#d7d9de;--wf-strong:#eceef2;--wf-muted:#a0a4af;--wf-surface:#1a1b20;--wf-subtle:rgba(255,255,255,.035);--wf-border:rgba(255,255,255,.10);--wf-inset:rgba(0,0,0,.22);--wf-ask:#ffce8a;--wf-success:#3fca68;--wf-failure:#ff7169;--wf-accent:#ffb13d;}'
-		+ '[data-mmxdwf-theme="light"] [data-mmxdwf-card],[data-mmxdwf-theme="light"] [data-mmxdwf-banner],[data-mmxdwf-theme="light"] #' + MODAL_ID + ',[data-mmxdwf-theme="light"] [data-mmxdwf-line],[data-mmxdwf-theme="light"] [data-' + NS + '-global-entry]{--wf-text:#343944;--wf-strong:#20242d;--wf-muted:#596273;--wf-surface:#ffffff;--wf-subtle:#f6f7f9;--wf-border:#dce1e8;--wf-inset:#f0f2f5;--wf-ask:#855100;--wf-success:#21783e;--wf-failure:#ba3029;--wf-accent:#956000;}'
+	CSS += '[data-mmxdwf-card],[data-mmxdwf-banner],#' + MODAL_ID + ',[data-' + NS + '-global-entry]{--wf-text:#d7d9de;--wf-strong:#eceef2;--wf-muted:#a0a4af;--wf-surface:#1a1b20;--wf-subtle:rgba(255,255,255,.035);--wf-border:rgba(255,255,255,.10);--wf-inset:rgba(0,0,0,.22);--wf-ask:#ffce8a;--wf-success:#3fca68;--wf-failure:#ff7169;--wf-accent:#ffb13d;}'
+		+ '[data-mmxdwf-theme="light"] [data-mmxdwf-card],[data-mmxdwf-theme="light"] [data-mmxdwf-banner],[data-mmxdwf-theme="light"] #' + MODAL_ID + ',[data-mmxdwf-theme="light"] [data-' + NS + '-global-entry]{--wf-text:#343944;--wf-strong:#20242d;--wf-muted:#596273;--wf-surface:#ffffff;--wf-subtle:#f6f7f9;--wf-border:#dce1e8;--wf-inset:#f0f2f5;--wf-ask:#855100;--wf-success:#21783e;--wf-failure:#ba3029;--wf-accent:#956000;}'
 		+ '[data-mmxdwf-theme="light"] [data-mmxdwf-card]{box-shadow:0 2px 8px rgba(25,35,50,.07);}'
 		// F03: the home/unknown global-history entry is fixed to its own corner and scoped to
 		// its own attribute — it never borrows the card box and never widens into a host
@@ -599,10 +487,9 @@
 		return null;
 	}
 	// A run is resolvable from the polled list, or — while the global-history modal holds its
-	// snapshot — from that snapshot. The history rows and the picker they open must survive the
-	// poll that drops a finished run out of /runs: resolving them against the live list only
-	// made those two paths dead (the modal's lifecycle check tore the picker down within one
-	// tick, and the row click resolved to nothing and silently did nothing).
+	// snapshot — from that snapshot. The history rows must survive the poll that drops a
+	// finished run out of /runs: resolving them against the live list only made that path dead
+	// (the row click resolved to nothing and silently did nothing).
 	function historyRunById(id) {
 		for (var i = 0; i < historyRuns.length; i++) if (identity(historyRuns[i]) === id) return historyRuns[i];
 		return null;
@@ -677,64 +564,6 @@
 		if (m.failed > 0) extra.push('失败' + m.failed);
 		if (m.rejected > 0) extra.push('拒绝' + m.rejected);
 		return base + (extra.length ? ' · ' + extra.join(' · ') : '');
-	}
-
-	// ---------- sidebar progress lines: native origin or explicit legacy bindings ----------
-	function phaseDots(run) {
-		var phases = run.phases || [];
-		var html = '';
-		for (var i = 0; i < phases.length && i < 5; i++) {
-			var m = phaseMeta(run, phases, i);
-			html += '<span class="mmxdwf-dot ' + m.state + '" title="' + esc(phases[i].name) + '"></span>';
-		}
-		return html;
-	}
-	function lineHtml(run) {
-		return '<div data-' + LINE_ATTR + '="1"><span class="mmxdwf-fork">⑂</span>' + phaseDots(run)
-			+ '<span class="mmxdwf-txt" title="' + esc(run.name || run.runId) + '">' + esc(run.currentPhase || run.name || run.runId) + '</span></div>';
-	}
-	function setRowStyle(row) {
-		if (!row._mmxDwfStyleSaved) row._mmxDwfStyleSaved = { flexWrap: row.style.flexWrap || '', height: row.style.height || '', minHeight: row.style.minHeight || '' };
-		row.style.flexWrap = 'wrap';
-		row.style.height = 'auto';
-		row.style.minHeight = '32px';
-	}
-	function restoreRowStyle(row) {
-		var b = row && row._mmxDwfStyleSaved;
-		if (!b) return;
-		row.style.flexWrap = b.flexWrap;
-		row.style.height = b.height;
-		row.style.minHeight = b.minHeight;
-		delete row._mmxDwfStyleSaved;
-	}
-	function sweepSidebar() {
-		var rows = document.querySelectorAll(SESSION_ROW_SEL);
-		rows.forEach(function (row) {
-			var sid = (row.getAttribute && row.getAttribute(SESSION_ID_ATTR)) || '';
-			var hit = null;
-			if (sid) {
-				// Only an explicitly bound run may claim a row; when several are bound to
-				// the same session the newest started run wins.
-				for (var i = 0; i < runs.length; i++) {
-					var b = bindingOf(runs[i]);
-					if (b && b.host === 'mmx' && b.sessionId === sid) {
-						if (!hit || String(runs[i].startedAt || '') > String(hit.startedAt || '')) hit = runs[i];
-					}
-				}
-			}
-			var old = row.querySelector('[data-' + LINE_ATTR + ']');
-			if (!hit) {
-				if (old) { restoreRowStyle(row); old.remove(); }
-				row.removeAttribute('data-mmxdwf-run');
-				return;
-			}
-			var key = identity(hit) + ':' + hit.startedAt + ':' + hit.updatedAt + ':' + hit.status;
-			if (old && row.getAttribute('data-mmxdwf-run') === key) return;
-			if (old) old.remove();
-			setRowStyle(row);
-			row.setAttribute('data-mmxdwf-run', key);
-			row.insertAdjacentHTML('beforeend', lineHtml(hit));
-		});
 	}
 
 	// ---------- conversation run cards ----------
@@ -923,7 +752,7 @@
 		return '<div data-mmxdwf-card="1" data-run="' + esc(identity(run)) + '">'
 			+ '<div class="mmxdwf-head"><span class="mmxdwf-title"><span class="mmxdwf-gear">' + (running ? '⚙' : run.status === 'completed' ? '✓' : '!') + '</span>' + esc(STATUS_CN[run.status] || run.status) + '</span>'
 			+ '<span class="mmxdwf-runname">' + esc(run.name || run.runId) + '</span>'
-			+ (bound ? '' : '<span class="mmxdwf-unbound" title="未绑定到任何会话；可在绑定后归入会话视图">未绑定</span>')
+			+ (bound ? '' : '<span class="mmxdwf-unbound" title="未绑定到任何会话；绑定当前会话后归入会话视图">未绑定</span>')
 			+ '<span class="mmxdwf-stats">' + (running ? '<span class="mmxdwf-live-dot"></span>' : '') + esc(stats) + '</span>'
 			+ '<span class="mmxdwf-icos">'
 			+ (running ? '<button class="mmxdwf-ico" data-act="stop" title="' + (control.stop === UNCONFIRMED ? '停止结果未确认，不会自动重发' : control.stop ? '停止请求已发送' : '停止工作流') + '"' + (control.stop ? ' disabled=""' : '') + '>' + (control.stop ? '…' : '⏹') + '</button>' : '<button class="mmxdwf-ico mmxdwf-close" data-act="close" title="关闭卡片（保留运行数据）">×</button>')
@@ -940,7 +769,7 @@
 			+ '<button class="mmxdwf-pill" data-act="result">📄 结果</button>'
 			+ '<button class="mmxdwf-pill" data-act="history">🗂 历史</button>'
 			+ (cur && !bound ? '<button class="mmxdwf-pill" data-act="bind" title="把该运行绑定到当前会话">🔗 绑定当前会话</button>' : '')
-			+ (!cur && !bound ? '<button class="mmxdwf-pill" data-act="bindpick" title="选择这个运行要归属的会话">🔗 选择会话…</button>' : '')
+			+ (!cur && !bound ? '<span class="mmxdwf-unbound" title="宿主未报告当前会话，无法归属到任何会话；不会猜测会话身份">🔗 无法归属</span>' : '')
 			+ '</div>'
 			+ '</div>';
 	}
@@ -1093,7 +922,7 @@
 		var host = document.getElementById(CARD_ID);
 		if (viewState() !== 'conversation') {
 			// Home (new conversation) and unknown routes never carry conversation cards; the
-			// sidebar progress lines and the global history modal remain the surfaces there.
+			// global history entry and its modal remain the surfaces there.
 			if (host) host.remove();
 			restoreAnchor();
 			// F03: the card host is gone here, so the global-history entry needs a home of its
@@ -1174,22 +1003,15 @@
 			return;
 		}
 		if (act === 'bind') {
+			// Fail-closed, in the F01 spirit: the host reports no verifiable current session, so
+			// there is no identity to attribute to and nothing is written. The card renders a
+			// non-interactive hint instead of a control that could only do nothing.
 			if (!run) return;
 			var cur = currentSessionId();
 			if (!cur) return;
 			bindRunToSession(run, cur, 'mmx-oneclick');
 			return;
 		}
-		if (act === 'bindpick') {
-			// Card-foot entry: the picker opens over the conversation, so a completed bind
-			// closes the modal again (pickerFromHistory stays false).
-			if (!run) return;
-			openSessionPicker(run);
-			return;
-		}
-		// The picker's session rows live in the modal, which is mounted on document.body — the
-		// clicks never bubble to the card host, so the modal's own listener owns 'bindpickrow'
-		// and duplicating it here would be an unreachable second implementation.
 		if (act === 'answer') {
 			if (!run) return;
 			var state = controlsFor(run), qId = t.getAttribute('data-q');
@@ -1359,26 +1181,6 @@
 		mEl.addEventListener('click', function (ev) {
 			var t = ev.target && ev.target.closest ? ev.target.closest('[data-act]') : null;
 			var act = t ? t.getAttribute('data-act') : '';
-			if (act === 'bindpickrow') {
-				// The picker lives in the modal, whose listener owns clicks here (the card host
-				// never sees them). The picked run may live only in the history snapshot, so it
-				// resolves through resolveRun like every other binding path.
-				var pickedRun = resolveRun(t.getAttribute('data-run') || '');
-				var pickedSid = t.getAttribute('data-sid') || '';
-				if (!pickedRun || !pickedSid) return;
-				bindRunToSession(pickedRun, pickedSid, 'mmx-picker');
-				if (pickerFromHistory) renderHistory(); else closeModal();
-				return;
-			}
-			if (act === 'bindpick') {
-				// The history rows open the same picker as the card foot; the run is usually
-				// only in historyRuns, and finishing the bind returns to this list.
-				var pid = t.getAttribute('data-hrun');
-				if (!pid) return;
-				var prun = resolveRun(pid);
-				if (prun) openSessionPicker(prun, true);
-				return;
-			}
 			if (act === 'bindcurrent' || act === 'unbindcurrent') {
 				var id = t.getAttribute('data-hrun');
 				var r = resolveRun(id);
@@ -1393,9 +1195,9 @@
 		});
 		focusModal();
 	}
-	// Closing the modal also drops the global-history snapshot: the history rows and the picker
-	// they open resolve runs through it, and a stale copy kept resolving runs that have since
-	// left /runs (and stayed resident for the rest of the session).
+	// Closing the modal also drops the global-history snapshot: the history rows resolve runs
+	// through it, and a stale copy kept resolving runs that have since left /runs (and stayed
+	// resident for the rest of the session).
 	function closeModal() {
 		if (mEl) mEl.style.display = 'none';
 		if (mEl) mEl.removeAttribute('aria-modal');
@@ -1714,21 +1516,12 @@
 			var btns = document.createElement('span');
 			btns.style.display = 'inline-flex';
 			btns.style.gap = '6px';
-			var bindBtn = document.createElement('button');
-			if (!cur) {
-				// With no verifiable current session "bind current session" can never fire —
-				// rendering it disabled would be a dead control (and would leave finished runs
-				// permanently unattributable). The picker names the session explicitly instead,
-				// straight from the history row. A native (or quarantined) run is excluded on
-				// both branches: bindRunToSession refuses it, so offering the button would be
-				// the same dead control the cur branch already avoids.
-				bindBtn.className = 'mmxdwf-hbtn';
-				bindBtn.setAttribute('data-act', 'bindpick');
-				bindBtn.setAttribute('data-hrun', rid);
-				bindBtn.textContent = '🔗 选择会话…';
-				bindBtn.title = '当前会话未知，请从侧栏会话列表中选择要归属的会话';
-				if (!binding || !binding.native) btns.appendChild(bindBtn);
-			} else {
+			// Fail-closed: with no verifiable current session there is no identity to attribute
+			// to, so no bind control is offered at all (neither live nor disabled) — a dead
+			// control would only promise an action this client will never take. A native (or
+			// quarantined) run is excluded for the same reason: bindRunToSession refuses it.
+			if (cur) {
+				var bindBtn = document.createElement('button');
 				bindBtn.className = 'mmxdwf-hbtn';
 				bindBtn.setAttribute('data-act', 'bindcurrent');
 				bindBtn.setAttribute('data-hrun', rid);
@@ -1765,7 +1558,7 @@
 			// ONE handler for the whole row: a click on the button bubbles here exactly once, so
 			// the button and the row background stay in step without a second toggle path.
 			row.addEventListener('click', function (ev) {
-				if (ev.target && ev.target.closest && ev.target.closest('[data-act="bindcurrent"],[data-act="unbindcurrent"],[data-act="bindpick"]')) return;
+				if (ev.target && ev.target.closest && ev.target.closest('[data-act="bindcurrent"],[data-act="unbindcurrent"]')) return;
 				var open = calls.style.display !== 'block';
 				calls.style.display = open ? 'block' : 'none';
 				toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -1955,7 +1748,6 @@
 				pollTick++;   // F04: the /runs poll IS the retry clock; no timer is armed.
 				hydrateResults();
 				ensureStyle();
-				try { sweepSidebar(); } catch (e) { reportSweepError('sweepSidebar', e); }
 				try { sweepCard(); } catch (e) { reportSweepError('sweepCard', e); }
 			})
 			.catch(function (e) {
@@ -1969,7 +1761,6 @@
 
 	function sweepAll() {
 		ensureStyle();
-		try { sweepSidebar(); } catch (e) { reportSweepError('sweepSidebar', e); }
 		try { sweepCard(); } catch (e) { reportSweepError('sweepCard', e); }
 	}
 
@@ -1994,11 +1785,6 @@
 			document.removeEventListener('visibilitychange', visibilityHandler);
 			var card = document.getElementById(CARD_ID);
 			if (card) card.remove();
-			document.querySelectorAll('[data-' + LINE_ATTR + ']').forEach(function (n) {
-				var row = n.parentElement;
-				if (row) { restoreRowStyle(row); row.removeAttribute('data-mmxdwf-run'); }
-				n.remove();
-			});
 			restoreAnchor();
 			revokeModalBlobs();
 			historyRuns = [];
@@ -2025,11 +1811,11 @@
 	// MiniMax Code has no module lifecycle; start immediately (once, thanks to the marker).
 	start();
 
-	// Read-only seam for the pending session-binding integration: a row-slot adapter can ask
-	// which session a run belongs to (capability is NOT exposed, and neither is any mutator).
-	// Bind/unbind exist ONLY as the result of a click inside our own picker/modal — exposing
-	// them on a writable global would let any page script mint a binding record that is
-	// indistinguishable on disk from one the user actually made.
+	// Read-only seam for the pending session-binding integration: an adapter can ask which
+	// session a run belongs to (capability is NOT exposed, and neither is any mutator).
+	// Bind/unbind exist ONLY as the result of a click inside our own modal — exposing them on a
+	// writable global would let any page script mint a binding record that is indistinguishable
+	// on disk from one the user actually made.
 	window.__mmxDwfInternals = {
 		identity: identity,
 		currentSessionId: currentSessionId,

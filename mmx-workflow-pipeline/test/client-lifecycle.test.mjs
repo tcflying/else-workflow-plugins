@@ -325,7 +325,12 @@ for (const client of clients) {
     assert.equal(f.doc.querySelector('[data-run="dismiss"]'), null);
     assert.ok([...f.storage.values()].some((v) => JSON.parse(v).includes('dismiss')));
   });
+  // DSH only: MMX stopped reading or writing the host session list on 2026-10-07 (the injected
+  // progress line, the row styles it owned and the explicit session picker are all gone from
+  // client-inject.js), but dsh-workflow-pipeline/client.js still paints session rows, so its
+  // coverage must stay here instead of being dropped with the MMX one.
   test(client.name + ': sidebar lines follow explicit session bindings only', async () => {
+    if (client.name !== 'DSH') return;
     const key = client.name === 'DSH' ? 'dwf-session-bindings' : 'mmxdwf-session-bindings';
     const storage = new Map([[key, JSON.stringify({ 'bound-run': { sessionId: 's1' } })]]);
     const f = fixture(client, [run('bound-run', 'completed'), run('unbound-run', 'completed', { startedAt: '2026-09-29T00:05:00Z' })], { storage });
@@ -447,29 +452,36 @@ for (const client of clients) {
     pending.forEach((r) => r({ ok: true, json: async () => ({ ok: true, runs: [run('late2', 'running')] }) }));
     await flush();
     assert.equal(f.doc.getElementById(p + '-run-card'), null);
-    assert.equal(f.doc.querySelector('[data-' + p + '-line]'), null);
     assert.equal(f.doc.getElementById(p + '-modal'), null);
     assert.equal(f.doc.getElementById(p + '-pipeline-style'), null);
   });
 
-  test(client.name + ': teardown restores host row styles and the conversation anchor', async () => {
+  // DSH only, same reason as above: only the DSH client still injects inline styles into a host
+  // session row, so only it has to give them back.
+  test(client.name + ': teardown restores host row styles', async () => {
+    if (client.name !== 'DSH') return;
     const key = client.name === 'DSH' ? 'dwf-session-bindings' : 'mmxdwf-session-bindings';
     const storage = new Map([[key, JSON.stringify({ t1: { sessionId: 's1' } })]]);
-    // 024-R4: the bound run drives the sidebar line; the unbound live run keeps the card
-    // pool non-empty in this no-session fixture so the conversation anchor is claimed.
-    const f = fixture(client, [run('t1', 'running'), run('t2', 'running')], { storage });
+    const f = fixture(client, [run('t1', 'running')], { storage });
     const row = f.doc.createElement('div'); row.className = 'sessionRow'; row.setAttribute('data-session-id', 's1'); row.textContent = 'session';
     f.doc.body.appendChild(row);
     await f.tick();
-    assert.equal(f.area.style.position, 'relative');
     assert.equal(row.style.flexWrap, 'wrap');
     f.stop();
     assert.equal(row.style.flexWrap, '', 'injected inline styles must be restored on teardown');
     assert.equal(row.style.height, '');
     assert.equal(row.style.minHeight, '');
+  });
+
+  test(client.name + ': teardown restores the conversation anchor', async () => {
+    // 024-R4: an unbound live run keeps the card pool non-empty in this no-session fixture,
+    // so the conversation anchor is claimed and must be given back on teardown.
+    const f = fixture(client, [run('t1', 'running'), run('t2', 'running')]);
+    await f.tick();
+    assert.equal(f.area.style.position, 'relative');
+    f.stop();
     assert.equal(f.area.style.position, '', 'conversation anchor position must be restored');
     assert.equal(f.doc.getElementById(p + '-pipeline-style'), null);
-    assert.equal(f.doc.querySelector('[data-' + p + '-line]'), null);
   });
 
   test(client.name + ': stop is single-submit, carries startedAt and surfaces server rejection', async () => {
@@ -644,26 +656,19 @@ test('MMX: 403 responses surface in the stale banner', async () => {
   assert.match(f.doc.body.textContent, /403|连接中断/);
 });
 
-test('MMX: explicit binding to the current session filters cards, sidebar and history', async () => {
+test('MMX: explicit binding to the current session filters cards and history', async () => {
   const f = fixture(mmx);
   const active = f.doc.createElement('div');
   active.setAttribute('data-shortcut-session-active', 'true');
   active.setAttribute('data-shortcut-session-target', 'sess-9');
   f.doc.body.appendChild(active);
-  const row = f.doc.createElement('div'); row.className = 'sessionRow'; row.setAttribute('data-session-id', 'sess-9'); row.textContent = '当前会话';
-  const otherRow = f.doc.createElement('div'); otherRow.className = 'sessionRow'; otherRow.setAttribute('data-session-id', 'sess-8'); otherRow.textContent = '别的会话';
-  f.doc.body.appendChild(row); f.doc.body.appendChild(otherRow);
 
   const live = run('live-unbound', 'running');
   f.setRuns([live]); await f.tick();
   assert.ok(f.doc.querySelector('[data-run="live-unbound"]'), 'an unbound live run stays visible so the user can bind it');
   assert.match(f.doc.querySelector('[data-run="live-unbound"]').textContent, /绑定当前会话/);
-  assert.equal(row.querySelector('[data-mmxdwf-line]'), null, 'unbound runs get no sidebar line');
-  assert.equal(otherRow.querySelector('[data-mmxdwf-line]'), null);
 
   f.doc.querySelector('[data-run="live-unbound"]').querySelector('[data-act="bind"]').dispatch('click'); await f.tick();
-  assert.match(row.querySelector('[data-mmxdwf-line]').textContent, /live-unbound/);
-  assert.equal(otherRow.querySelector('[data-mmxdwf-line]'), null, 'another session row must not show the bound run');
   const raw = f.storage.get('mmxdwf-session-bindings');
   assert.ok(raw && JSON.parse(raw)['live-unbound']?.sessionId === 'sess-9', 'binding must persist');
 
@@ -767,7 +772,11 @@ for (const client of clients) {
     assert.doesNotMatch(f.doc.querySelector('.' + p + '-mbody').textContent, /OLD_LIFECYCLE_RESULT/);
     assert.match(f.doc.querySelector('.' + p + '-mbody').textContent, /生命周期|重新打开|已重启/);
   });
+  // DSH only, same reason as above. This is also the only assertion left anywhere in the repo
+  // that reads the CONTENT of an injected progress line: the dots, the fork glyph and the
+  // current-phase text all come from lineHtml(), and nothing else checks what it renders.
   test(client.name + ': sidebar shows the current phase and teardown removes its run marker', async () => {
+    if (client.name !== 'DSH') return;
     const key = client.name === 'DSH' ? 'dwf-session-bindings' : 'mmxdwf-session-bindings';
     const f = fixture(client, [run('run-title', 'running', { currentPhase: '验证阶段' })], { storage: new Map([[key, JSON.stringify({ 'run-title': { sessionId: 's1' } })]]) });
     const row = f.doc.createElement('div'); row.className = 'sessionRow'; row.setAttribute('data-session-id', 's1'); f.doc.body.appendChild(row);
@@ -817,10 +826,8 @@ for (const client of clients) {
   });
   test(client.name + ': identical session ids in another host never claim this host session', async () => {
     const f = nativeFixture([run('foreign', 'running', { hostSession: native('same-session', host === 'dsh' ? 'mmx' : 'dsh') })]);
-    const row = f.doc.createElement('div'); row.className = 'sessionRow'; row.setAttribute('data-session-id', 'same-session'); f.doc.body.appendChild(row);
     await f.tick();
     assert.equal(f.doc.querySelector('[data-run="foreign"]'), null);
-    assert.equal(row.querySelector('[data-' + p + '-line]'), null);
   });
   test(client.name + ': native origin overrides obsolete local bindings and cannot be rebound from history', async () => {
     const key = client.name === 'DSH' ? 'dwf-session-bindings' : 'mmxdwf-session-bindings';
@@ -948,155 +955,65 @@ for (const client of clients) {
   });
 }
 
-// ---------- 024-R4 续: MMX 无活动标记时的显式会话选择绑定 ----------
-test('MMX: without an active-session marker the card offers a session picker that binds and draws the sidebar line', async () => {
-  // Measured on the live 3.1.0 build: the active marker is absent entirely, so the one-click
-  // "bind current session" can never appear. Picking a row explicitly is still a user action,
-  // so attribution stays verifiable — the run lands under the session the user chose.
+// ---------- 024-R4 续: 无可验证当前会话时，绑定一律 fail-closed ----------
+// The host-side session list is not read or written any more, so an unknown current session
+// leaves exactly one deliberate binding path: bind to the session the host itself reports.
+// With no reported session there is no identity to attribute to, so NO bind control is offered
+// — neither live nor disabled — and nothing is ever written.
+test('MMX: without a verifiable current session the card offers no bind control at all', async () => {
   const f = fixture(mmx, [run('pick-me', 'running')]);
-  const mkRow = (sid, title) => { const r = f.doc.createElement('div'); r.setAttribute('data-session-id', sid); r.textContent = title; f.doc.body.appendChild(r); return r; };
-  const rowA = mkRow('447987372052656', '第一个会话');
-  const rowB = mkRow('447683061084721', '第二个会话');
   await f.tick();
-  assert.equal(f.doc.querySelector('[data-act="bind"]'), null, 'one-click bind needs a verifiable current session');
-  assert.ok(f.doc.querySelector('[data-act="bindpick"]'), 'the picker entry must exist without an active marker');
-
-  f.doc.querySelector('[data-act="bindpick"]').dispatch('click'); await flush();
-  const rows = f.doc.querySelectorAll('.mmxdwf-srow');
-  assert.equal(rows.length, 2, 'the picker lists every sidebar session');
-  assert.ok(rows[0].textContent.includes('第一个会话'));
-  rows[1].dispatch('click'); await f.tick();
-  assert.equal(JSON.parse(f.storage.get('mmxdwf-session-bindings'))['pick-me'].sessionId, '447683061084721', 'the chosen session id is what gets bound');
-  assert.ok(rowB.querySelector('[data-mmxdwf-line]'), 'the sidebar line appears on the chosen row');
-  assert.equal(rowA.querySelector('[data-mmxdwf-line]'), null, 'and never on any other row');
-  assert.equal(f.doc.querySelector('[data-act="bindpick"]'), null, 'a bound run offers no further binding');
+  const card = f.doc.querySelector('[data-run="pick-me"]');
+  assert.ok(card);
+  assert.equal(card.querySelector('[data-act="bind"]'), null, 'one-click bind needs a verifiable current session');
+  assert.equal(f.doc.querySelector('[data-act="bindpick"]'), null, 'no session-list picker exists any more');
+  assert.match(card.textContent, /无法归属/, 'the run says plainly that it cannot be attributed');
+  const hint = card.querySelector('.mmxdwf-foot').querySelector('.mmxdwf-unbound');
+  assert.ok(hint, 'the hint is rendered in place of the control');
+  assert.equal(hint.getAttribute('data-act'), null, 'and it is not a control at all — there is nothing to click');
+  // A click anywhere on the card foot writes nothing.
+  card.querySelector('.mmxdwf-foot').dispatch('click'); await f.tick();
+  assert.equal(f.storage.get('mmxdwf-session-bindings'), undefined, 'no attribution is fabricated');
 });
 
-test('MMX: the session picker re-lists current sidebar sessions instead of a stale snapshot', async () => {
-  const f = fixture(mmx, [run('pick-live', 'running')]);
-  const early = f.doc.createElement('div'); early.setAttribute('data-session-id', 'sid-early'); early.textContent = '早的会话';
-  f.doc.body.appendChild(early);
+test('MMX: a host-reported current session still offers the one-click bind', async () => {
+  const sid = 'mvs_' + 'a'.repeat(32);
+  const f = fixture(mmx, [run('pick-me', 'running')]);
+  f.sandbox.sessionStorage.setItem('mavis:activeSessionId', sid);
   await f.tick();
-  f.doc.querySelector('[data-act="bindpick"]').dispatch('click'); await flush();
-  assert.equal(f.doc.querySelectorAll('.mmxdwf-srow').length, 1);
-  f.doc.querySelector('[data-act="mclose"]').dispatch('click');
-  const late = f.doc.createElement('div'); late.setAttribute('data-session-id', 'sid-late'); late.textContent = '新的会话';
-  f.doc.body.appendChild(late);
-  f.doc.querySelector('[data-act="bindpick"]').dispatch('click'); await flush();
-  assert.deepEqual(f.doc.querySelectorAll('.mmxdwf-srow').map((r) => r.textContent.trim()), ['早的会话', '新的会话'],
-    'sessions added after the first open must be selectable');
+  const bind = f.doc.querySelector('[data-run="pick-me"]').querySelector('[data-act="bind"]');
+  assert.ok(bind, 'the one deliberate binding path is intact');
+  bind.dispatch('click'); await f.tick();
+  const saved = JSON.parse(f.storage.get('mmxdwf-session-bindings'))['pick-me'];
+  assert.equal(saved.sessionId, sid);
+  assert.equal(saved.source, 'mmx-oneclick');
 });
 
-test('MMX: an empty sidebar keeps the picker usable and explains itself', async () => {
-  const f = fixture(mmx, [run('pick-empty', 'running')]);
+test('MMX: with no current session the global history offers no bind control either', async () => {
+  const f = fixture(mmx, [run('hist-pick', 'completed')], { watched: false });
   await f.tick();
-  f.doc.querySelector('[data-act="bindpick"]').dispatch('click'); await flush();
-  assert.match(f.doc.querySelector('.mmxdwf-mbody').textContent, /没有可绑定的会话|暂无会话/);
-});
-
-function addSession(f, sid, title) {
-  const el = f.doc.createElement('div');
-  el.setAttribute('data-session-id', sid);
-  el.textContent = title;
-  f.doc.body.appendChild(el);
-}
-
-test('MMX: the picker filters hundreds of sidebar sessions as you type', async () => {
-  const f = fixture(mmx, [run('pick-filter', 'running')]);
-  for (let i = 0; i < 40; i++) addSession(f, 'mvs_' + i, '会话 ' + i);
-  addSession(f, 'mvs_deadbeef', '排查 Codex 无法启动');
-  await f.tick();
-  f.doc.querySelector('[data-act="bindpick"]').dispatch('click'); await flush();
-  assert.equal(f.doc.querySelectorAll('.mmxdwf-srow').length, 41, 'every session is offered before filtering');
-  const filter = f.doc.querySelector('.mmxdwf-filter');
-  filter.value = 'codex';
-  filter.dispatch('input');
-  assert.deepEqual(f.doc.querySelectorAll('.mmxdwf-srow').map((r) => r.textContent), ['排查 Codex 无法启动'],
-    'the filter matches the title case-insensitively');
-  assert.match(f.doc.querySelector('.mmxdwf-pickhead').textContent, /1 \/ 41/, 'the counter names the subset on screen');
-  filter.value = 'DEADBEEF';
-  filter.dispatch('input');
-  assert.deepEqual(f.doc.querySelectorAll('.mmxdwf-srow').map((r) => r.getAttribute('data-sid')), ['mvs_deadbeef'],
-    'the filter also matches the raw session id');
-  filter.value = '   ';
-  filter.dispatch('input');
-  assert.equal(f.doc.querySelectorAll('.mmxdwf-srow').length, 41, 'whitespace alone is not a filter');
-});
-
-test('MMX: a filter that matches nothing says so instead of showing an empty box', async () => {
-  const f = fixture(mmx, [run('pick-nomatch', 'running')]);
-  addSession(f, 'mvs_a', '第一个会话');
-  await f.tick();
-  f.doc.querySelector('[data-act="bindpick"]').dispatch('click'); await flush();
-  const filter = f.doc.querySelector('.mmxdwf-filter');
-  filter.value = 'zzz-不存在';
-  filter.dispatch('input');
-  assert.equal(f.doc.querySelectorAll('.mmxdwf-srow').length, 0);
-  const none = f.doc.querySelector('.mmxdwf-picknone');
-  assert.equal(none.style.display, 'block');
-  assert.match(none.textContent, /zzz-不存在/);
-  filter.value = '会话';
-  filter.dispatch('input');
-  assert.equal(none.style.display, 'none', 'the empty state clears as soon as something matches again');
-  assert.equal(f.doc.querySelectorAll('.mmxdwf-srow').length, 1);
-});
-
-test('MMX: reopening the picker starts from a clean filter', async () => {
-  const f = fixture(mmx, [run('pick-reopen', 'running')]);
-  addSession(f, 'mvs_a', '甲会话');
-  addSession(f, 'mvs_b', '乙会话');
-  await f.tick();
-  f.doc.querySelector('[data-act="bindpick"]').dispatch('click'); await flush();
-  const first = f.doc.querySelector('.mmxdwf-filter');
-  first.value = '甲';
-  first.dispatch('input');
-  assert.equal(f.doc.querySelectorAll('.mmxdwf-srow').length, 1);
-  f.doc.querySelector('[data-act="mclose"]').dispatch('click');
-  f.doc.querySelector('[data-act="bindpick"]').dispatch('click'); await flush();
-  assert.equal(f.doc.querySelector('.mmxdwf-filter').value, '', 'a stale query must not silently hide sessions');
-  assert.equal(f.doc.querySelectorAll('.mmxdwf-srow').length, 2);
+  assert.equal(f.doc.querySelector('[data-run="hist-pick"]'), null, 'never-watched finished run stays out of the card view');
+  f.doc.querySelector('[data-act="history"]').dispatch('click'); await flush();
+  assert.equal(f.doc.querySelector('[data-act="bindcurrent"]'), null, 'a dead bind control is never rendered');
+  assert.equal(f.doc.querySelector('[data-act="bindpick"]'), null);
+  assert.match(f.doc.querySelector('.mmxdwf-mbody').textContent, /未绑定会话/, 'the row simply says it is unattributed');
+  assert.equal(f.storage.get('mmxdwf-session-bindings'), undefined, 'nothing was written');
 });
 
 // ---------- v8: marker-less host (3.1.0) must stay fully usable ----------
 // Measured 3.1.0 has NO active-session marker: currentSessionId() is always ''. These tests
 // run with no data-shortcut-session-active element at all — the real production shape.
 
-test('MMX v8: binding keeps the card instead of deleting it (no active-session marker)', async () => {
-  const f = fixture(mmx, [run('bind-keep', 'running')]);
-  const row = f.doc.createElement('div');
-  row.setAttribute('data-session-id', 'sess-b');
-  row.textContent = '真实会话标题';
-  f.doc.body.appendChild(row);
+test('MMX v8: a persisted manual binding keeps its card even with no current session reported', async () => {
+  // v8's rule survives the removal of the picker: a run the user already attributed stays in
+  // view instead of vanishing, because a stored mmx binding is still a deliberate user action.
+  const key = 'mmxdwf-session-bindings';
+  const f = fixture(mmx, [run('bind-keep', 'running')], {
+    storage: new Map([[key, JSON.stringify({ 'bind-keep': { host: 'mmx', source: 'mmx-oneclick', sessionId: 'mvs_' + 'b'.repeat(32) } })]]),
+  });
   await f.tick();
-  assert.ok(f.doc.querySelector('[data-run="bind-keep"]'), 'live card is up');
-  f.doc.querySelector('[data-act="bindpick"]').dispatch('click'); await flush();
-  f.doc.querySelector('[data-act="bindpickrow"][data-sid="sess-b"]').dispatch('click'); await flush();
-  await f.tick(); await f.tick();
-  assert.ok(f.doc.querySelector('[data-run="bind-keep"]'), 'the card the user just bound must stay on screen');
-  assert.equal(f.doc.querySelector('[data-act="bindpick"]'), null, 'a bound run offers no further binding');
-  assert.ok(f.doc.querySelector('[data-mmxdwf-line]'), 'the sidebar line is painted');
-});
-
-test('MMX v8: history rows offer the session picker on a marker-less host', async () => {
-  const f = fixture(mmx, [run('hist-pick', 'completed')], { watched: false });
-  const row = f.doc.createElement('div');
-  row.setAttribute('data-session-id', 'sess-h');
-  row.textContent = '历史会话';
-  f.doc.body.appendChild(row);
-  await f.tick();
-  assert.equal(f.doc.querySelector('[data-run="hist-pick"]'), null, 'never-watched finished run stays out of the card view');
-  f.doc.querySelector('[data-act="history"]').dispatch('click'); await flush();
-  const dead = f.doc.querySelector('[data-act="bindcurrent"]');
-  const pick = [...f.doc.querySelectorAll('.mmxdwf-hrow')].flatMap((r) => [...r.querySelectorAll('[data-act="bindpick"]')])[0];
-  assert.equal(dead, null, 'the one-click bind must not render disabled on a host with no marker');
-  assert.ok(pick, 'the history row names the session via the picker instead');
-  pick.dispatch('click'); await flush();
-  f.doc.querySelector('[data-act="bindpickrow"][data-sid="sess-h"]').dispatch('click'); await flush();
-  const saved = JSON.parse(f.storage.get('mmxdwf-session-bindings'))['hist-pick'];
-  assert.ok(saved, 'binding from the history row persists');
-  assert.equal(saved.sessionId, 'sess-h');
-  assert.equal(saved.host, 'mmx');
-  assert.equal(saved.source, 'mmx-picker', 'the persisted record names its origin');
+  assert.ok(f.doc.querySelector('[data-run="bind-keep"]'), 'the card a bound run owns must stay on screen');
+  assert.equal(f.doc.querySelector('[data-run="bind-keep"]').querySelector('[data-act="bind"]'), null, 'a bound run offers no further binding');
 });
 
 test('MMX v8: a finished run is reachable from global history even with no card on screen', async () => {
@@ -1108,26 +1025,6 @@ test('MMX v8: a finished run is reachable from global history even with no card 
   notice.dispatch('click'); await flush();
   assert.ok(f.doc.querySelector('.mmxdwf-hrow'), 'the history modal lists the finished run');
   assert.match(f.doc.querySelector('.mmxdwf-mbody').textContent, /orphan-fin/);
-});
-
-test('MMX v8: the picker reads titles without our injected progress line', async () => {
-  const f = fixture(mmx, [run('title-clean', 'running')]);
-  const row = f.doc.createElement('div');
-  row.setAttribute('data-session-id', 'sess-t');
-  const title = f.doc.createElement('span');
-  title.className = 'w-0 flex-1 text-sm truncate';
-  title.textContent = '排查 Codex 无法启动';
-  row.appendChild(title);
-  f.doc.body.appendChild(row);
-  await f.tick();
-  // simulate what a previous binding painted into that row: a progress line child
-  const line = f.doc.createElement('div');
-  line.setAttribute('data-mmxdwf-line', '1');
-  line.textContent = '⑂ 收尾阶段';
-  row.appendChild(line);
-  f.doc.querySelector('[data-act="bindpick"]').dispatch('click'); await flush();
-  const entry = f.doc.querySelector('[data-act="bindpickrow"][data-sid="sess-t"]');
-  assert.equal(entry.textContent, '排查 Codex 无法启动', 'the picker title must not swallow the injected line text');
 });
 
 test('DSH: the client module declares the services it touches for Cordis inject', async () => {
@@ -1163,14 +1060,13 @@ test('MMX: teardown before DOM readiness prevents all late initialization', asyn
 
 // ---------- v9 repairs ----------
 // Live measurement (2026-10-03, MiniMax Code 3.1.0): the host writes its active session id into
-// sessionStorage['mavis:activeSessionId'] on every tab, and the sidebar row of that session is
-// ALSO marked in the DOM. Both are the host telling us which session is active; the DOM marker
-// only exists while that row is rendered, so it comes and goes. v8 assumed the marker was never
-// there; v9 reads the host state first and keeps every cur and no-cur path working.
+// sessionStorage['mavis:activeSessionId'] on every tab, and marks that session in the DOM as
+// well. Both are the host telling us which session is active; the DOM marker only exists while
+// the element is rendered, so it comes and goes. v8 assumed the marker was never there; v9 reads
+// the host state first and keeps every cur and no-cur path working.
 
 const SESSION_STATE_KEY = 'mavis:activeSessionId';
 const mvsId = (c) => 'mvs_' + c.repeat(32);
-const histPickOf = (f) => f.doc.querySelectorAll('.mmxdwf-hrow').flatMap((r) => [...r.querySelectorAll('[data-act="bindpick"]')])[0];
 
 test('MMX v9: the current session comes from the host session state first, the DOM marker second', async () => {
   const stored = mvsId('a');
@@ -1199,7 +1095,8 @@ test('MMX v9: the current session comes from the host session state first, the D
     const h = fixture(mmx, [run('ss-bad', 'running')], { sessionStorage: new Map([[SESSION_STATE_KEY, bad]]) });
     await h.tick();
     assert.equal(h.doc.querySelector('[data-act="bind"]'), null, 'an unusable session value counts as absent: ' + JSON.stringify(bad));
-    assert.ok(h.doc.querySelector('[data-act="bindpick"]'), '... and the explicit picker stays available: ' + JSON.stringify(bad));
+    assert.equal(h.storage.get('mmxdwf-session-bindings'), undefined,
+      '... and nothing is written in its place: ' + JSON.stringify(bad));
   }
   const i = fixture(mmx, [run('ss-fallback', 'running')], { sessionStorage: new Map([[SESSION_STATE_KEY, 'garbage']]) });
   const fallback = i.doc.createElement('div');
@@ -1212,72 +1109,59 @@ test('MMX v9: the current session comes from the host session state first, the D
     'the DOM marker is still the fallback source when the stored value is unusable');
 });
 
-test('MMX v9: with no current session, native and quarantined runs get no dead picker button', async () => {
-  // bindRunToSession refuses a run that carries a hostSession, so rendering the picker for
-  // those rows was a control that looked live and wrote nothing.
+test('MMX v9: native and quarantined runs get no manual re-bind even with a current session', async () => {
+  // bindRunToSession refuses a run that carries a hostSession, so offering a rebind control for
+  // those rows would be one that looks live and writes nothing.
+  const sid = mvsId('a');
   const f = fixture(mmx, [
     run('nat-hist', 'completed', { hostSession: { host: 'mmx', sessionId: 'mvs_native', source: 'native-hook' } }),
     run('bad-hist', 'completed', { hostSession: { host: 'mmx', sessionId: 'mvs_bad', source: 'guessed' } }),
     run('plain-hist', 'completed'),
-  ], { watched: false });
+  ], { watched: false, sessionStorage: new Map([[SESSION_STATE_KEY, sid]]) });
   await f.tick();
   f.doc.querySelector('[data-act="history"]').dispatch('click'); await flush();
   const rowFor = (id) => f.doc.querySelectorAll('.mmxdwf-hrow').find((r) => r.textContent.includes(id));
   const nat = rowFor('nat-hist'), bad = rowFor('bad-hist'), plain = rowFor('plain-hist');
   assert.ok(nat && bad && plain, 'all three runs are listed in the global history');
-  assert.equal(nat.querySelector('[data-act="bindpick"]'), null, 'a native run must not offer a manual re-bind');
-  assert.equal(nat.querySelector('[data-act="bindcurrent"]'), null);
-  assert.equal(bad.querySelector('[data-act="bindpick"]'), null, 'a quarantined origin must not either');
+  assert.equal(nat.querySelector('[data-act="bindcurrent"]'), null, 'a native run must not offer a manual re-bind');
+  assert.equal(bad.querySelector('[data-act="bindcurrent"]'), null, 'a quarantined origin must not either');
   assert.match(nat.textContent, /原生会话/);
   assert.match(bad.textContent, /归属数据无效/);
-  assert.ok(plain.querySelector('[data-act="bindpick"]'), 'a plain unbound run still names its session explicitly');
-  assert.equal(f.doc.querySelectorAll('[data-act="bindpick"]').length, 1, 'exactly one live bind control');
+  assert.ok(plain.querySelector('[data-act="bindcurrent"]'), 'a plain unbound run still offers the one deliberate bind');
+  assert.equal(f.doc.querySelectorAll('[data-act="bindcurrent"]').length, 1, 'exactly one live bind control');
 });
 
 test('MMX v9: a run that has left /runs is still bindable from its history row', async () => {
   // The whole point of the historyRuns fallback: the snapshot is the only place the run exists
-  // now, so the picker it opens must survive the next poll and the row click must land.
-  const f = fixture(mmx, [run('hist-only', 'completed')], { watched: false });
-  const row = f.doc.createElement('div'); row.setAttribute('data-session-id', 'sess-ho'); row.textContent = '历史会话';
-  f.doc.body.appendChild(row);
+  // now, so the bind control it renders must survive the next poll and the row click must land.
+  const sid = mvsId('a');
+  const f = fixture(mmx, [run('hist-only', 'completed')], { watched: false, sessionStorage: new Map([[SESSION_STATE_KEY, sid]]) });
   await f.tick();
   f.doc.querySelector('[data-act="history"]').dispatch('click'); await flush();
-  const pick = histPickOf(f);
-  assert.ok(pick, 'the history row offers the picker');
+  const bind = f.doc.querySelector('[data-act="bindcurrent"]');
+  assert.ok(bind, 'the history row offers the bind');
   f.setRuns([]); await f.tick();                      // the run leaves the polled list
-  pick.dispatch('click'); await flush();
-  assert.equal(f.doc.querySelectorAll('.mmxdwf-srow').length, 1, 'the picker opens for a history-only run');
-  await f.tick();                                     // a poll must not tear the picker down
-  assert.ok(f.doc.querySelector('.mmxdwf-srow'), 'the picker survives the modal lifecycle check');
-  f.doc.querySelector('[data-act="bindpickrow"][data-sid="sess-ho"]').dispatch('click'); await flush();
-  assert.equal(JSON.parse(f.storage.get('mmxdwf-session-bindings'))['hist-only'].sessionId, 'sess-ho',
+  await f.tick();                                     // a poll must not invalidate the open history
+  assert.ok(f.doc.querySelector('[data-act="bindcurrent"]'), 'the control survives the modal lifecycle check');
+  f.doc.querySelector('[data-act="bindcurrent"]').dispatch('click'); await flush();
+  assert.equal(JSON.parse(f.storage.get('mmxdwf-session-bindings'))['hist-only'].sessionId, sid,
     "the user's explicit bind reaches disk instead of being swallowed");
-  assert.match(f.doc.querySelector('.mmxdwf-mbody').textContent, /已绑定会话 sess-ho/,
+  assert.match(f.doc.querySelector('.mmxdwf-mbody').textContent, /已绑定会话/,
     'and the history row reports the binding it just made');
 });
 
 test('MMX v9: binding from a history row keeps the user in the history list', async () => {
-  const f = fixture(mmx, [run('stay-hist', 'completed')], { watched: false });
-  addSession(f, 'sess-stay', '留在历史');
+  const sid = mvsId('a');
+  const f = fixture(mmx, [run('stay-hist', 'completed')], { watched: false, sessionStorage: new Map([[SESSION_STATE_KEY, sid]]) });
   await f.tick();
   f.doc.querySelector('[data-act="history"]').dispatch('click'); await flush();
-  histPickOf(f).dispatch('click'); await flush();
-  f.doc.querySelector('[data-act="bindpickrow"][data-sid="sess-stay"]').dispatch('click'); await flush();
+  f.doc.querySelector('[data-act="bindcurrent"]').dispatch('click'); await flush();
   const body = f.doc.querySelector('.mmxdwf-mbody');
   assert.equal(f.doc.getElementById('mmxdwf-modal').style.display, 'flex', 'the modal stays open on the history path');
-  assert.equal(body.querySelector('.mmxdwf-srow'), null, 'the picker is gone');
   assert.ok(body.querySelector('.mmxdwf-hrow'), 'the global history is rendered again rather than discarded');
   assert.match(body.textContent, /stay-hist/);
-  assert.equal(JSON.parse(f.storage.get('mmxdwf-session-bindings'))['stay-hist'].sessionId, 'sess-stay');
-
-  // the card foot is the other entry: the conversation card is what matters there
-  const g = fixture(mmx, [run('card-pick', 'running')]);
-  addSession(g, 'sess-card', '卡片会话');
-  await g.tick();
-  g.doc.querySelector('[data-act="bindpick"]').dispatch('click'); await flush();
-  g.doc.querySelector('[data-act="bindpickrow"][data-sid="sess-card"]').dispatch('click'); await flush();
-  assert.equal(g.doc.getElementById('mmxdwf-modal').style.display, 'none', 'the card-foot picker closes the modal');
-  assert.ok(g.doc.querySelector('[data-run="card-pick"]'), 'and the conversation card stays on screen');
+  assert.equal(JSON.parse(f.storage.get('mmxdwf-session-bindings'))['stay-hist'].sessionId, sid);
+  assert.equal(f.storage.get('mmxdwf-session-bindings') && JSON.parse(f.storage.get('mmxdwf-session-bindings'))['stay-hist'].source, 'mmx-oneclick');
 });
 
 test('MMX v9: the card-host banner carries its own stylesheet scope', async () => {
@@ -1314,51 +1198,33 @@ test('MMX v9: a persisted binding keeps the origin it recorded instead of being 
       bogus: { host: 'mmx', source: 'native-hook', sessionId: 'sess-bogus' },
     })]]),
   });
-  addSession(f, 'sess-ours', '本站会话'); addSession(f, 'sess-foreign', '他站会话'); addSession(f, 'sess-legacy', '旧记录会话');
   await f.tick();
-  const lineOn = (sid) => !!f.doc.querySelector('[data-session-id="' + sid + '"]').querySelector('[data-mmxdwf-line]');
-  assert.ok(lineOn('sess-ours'), 'our own picker record still drives the sidebar line');
-  assert.ok(lineOn('sess-legacy'), 'a pre-v8 record in our own key stays valid');
-  assert.equal(lineOn('sess-foreign'), false, "another host's record must not be relabelled as an mmx binding");
   const bindingOf = f.sandbox.__mmxDwfInternals.bindingOf;
   const ours = bindingOf({ runId: 'ours' });
   assert.equal(ours.host, 'mmx');
   assert.equal(ours.sessionId, 'sess-ours');
   assert.equal(ours.source, 'mmx-picker', 'the runtime attribution object carries {host, sessionId, source}');
-  assert.equal(bindingOf({ runId: 'foreign' }), null, 'a foreign-origin record yields no binding at all');
-  assert.equal(bindingOf({ runId: 'bogus' }), null, 'a record that did not come from the picker is not ours either');
+  assert.equal(bindingOf({ runId: 'legacy' }).sessionId, 'sess-legacy', 'a pre-v8 record in our own key stays valid');
+  assert.equal(bindingOf({ runId: 'foreign' }), null, "another host's record must not be relabelled as an mmx binding");
+  assert.equal(bindingOf({ runId: 'bogus' }), null, 'a record that did not come from our own bind control is not ours either');
   assert.equal(bindingOf({ runId: 'unbound' }), null);
 });
 
-test('MMX v10: the two binding entry points each record their own origin', async () => {
-  // Both are deliberate user actions, so both attribute — but the record must say WHICH one it
-  // was. v9 read the source and still wrote a constant, so a one-click bind was filed as a pick.
-  // The two entries are mutually exclusive on a card: one-click renders when the host reports a
-  // current session, the picker when it does not — so they are exercised in two worlds.
+test('MMX v10: the one-click bind records its own origin', async () => {
+  // The record must say WHICH deliberate action produced it. v9 read the source and still wrote
+  // a constant, so a one-click bind was filed as a pick. It is the only bind entry point now.
   const SID = mvsId('a');
-  const withCur = fixture(mmx, [run('oneclick', 'running')]);
-  addSession(withCur, SID, '会话 X');
-  withCur.sandbox.sessionStorage.setItem(SESSION_STATE_KEY, SID);
-  await withCur.tick();
-  const oneClick = [...withCur.doc.querySelectorAll('[data-run="oneclick"]')].flatMap((c) => [...c.querySelectorAll('[data-act="bind"]')])[0];
-  assert.ok(oneClick, 'with a verifiable current session the card offers the one-click bind');
-  assert.equal([...withCur.doc.querySelectorAll('[data-run="oneclick"]')].flatMap((c) => [...c.querySelectorAll('[data-act="bindpick"]')]).length, 0,
-    'and not the picker at the same time');
+  const f = fixture(mmx, [run('oneclick', 'running')]);
+  f.sandbox.sessionStorage.setItem(SESSION_STATE_KEY, SID);
+  await f.tick();
+  const oneClick = [...f.doc.querySelectorAll('[data-run="oneclick"]')].flatMap((c) => [...c.querySelectorAll('[data-act="bind"]')])[0];
+  assert.ok(oneClick, 'the card offers the one deliberate bind');
   oneClick.dispatch('click'); await flush();
-  const savedOne = JSON.parse(withCur.storage.get('mmxdwf-session-bindings'));
-  assert.equal(savedOne.oneclick.source, 'mmx-oneclick', 'a one-click bind must not be filed as a picker bind');
-  assert.equal(savedOne.oneclick.sessionId, SID);
-  assert.equal(withCur.sandbox.__mmxDwfInternals.bindingOf({ runId: 'oneclick' }).source, 'mmx-oneclick', 'and it reads back as such');
-  assert.ok(withCur.doc.querySelector('[data-session-id="' + SID + '"]').querySelector('[data-mmxdwf-line]'), 'the sidebar line lands on that session');
-
-  const noCur = fixture(mmx, [run('picked', 'running')]);
-  addSession(noCur, SID, '会话 X');
-  await noCur.tick();
-  noCur.doc.querySelector('[data-act="bindpick"]').dispatch('click'); await flush();
-  noCur.doc.querySelector('[data-act="bindpickrow"][data-sid="' + SID + '"]').dispatch('click'); await flush();
-  const savedPick = JSON.parse(noCur.storage.get('mmxdwf-session-bindings'));
-  assert.equal(savedPick.picked.source, 'mmx-picker', 'the picker keeps its own origin');
-  assert.equal(savedPick.picked.sessionId, SID);
+  const saved = JSON.parse(f.storage.get('mmxdwf-session-bindings'));
+  assert.equal(saved.oneclick.source, 'mmx-oneclick', 'the record names its own origin');
+  assert.equal(saved.oneclick.sessionId, SID);
+  assert.equal(saved.oneclick.host, 'mmx');
+  assert.equal(f.sandbox.__mmxDwfInternals.bindingOf({ runId: 'oneclick' }).source, 'mmx-oneclick', 'and it reads back as such');
 });
 
 test('MMX v10: a one-click record survives a reload, an unknown origin does not', async () => {
@@ -1369,11 +1235,10 @@ test('MMX v10: a one-click record survives a reload, an unknown origin does not'
       weird: { host: 'mmx', source: 'mmx-telepathy', sessionId: 'sess-weird' },
     })]]),
   });
-  addSession(f, 'sess-oc', '本站会话'); addSession(f, 'sess-weird', '来路不明');
   await f.tick();
-  const lineOn = (sid) => !!f.doc.querySelector('[data-session-id="' + sid + '"]').querySelector('[data-mmxdwf-line]');
-  assert.ok(lineOn('sess-oc'), 'a one-click record from a previous session still drives the sidebar line');
-  assert.equal(lineOn('sess-weird'), false, 'an origin this client never writes stays isolated');
+  const bindingOf = f.sandbox.__mmxDwfInternals.bindingOf;
+  assert.equal(bindingOf({ runId: 'oc' }).sessionId, 'sess-oc', 'a one-click record from a previous session is still read');
+  assert.equal(bindingOf({ runId: 'weird' }), null, 'an origin this client never writes stays isolated');
 });
 
 test('MMX v9: a cached script is dropped when its run leaves /runs', async () => {
@@ -1390,16 +1255,16 @@ test('MMX v9: a cached script is dropped when its run leaves /runs', async () =>
 });
 
 test('MMX v9: closing the history modal drops its run snapshot', async () => {
-  const f = fixture(mmx, [run('snap-run', 'completed')], { watched: false });
-  addSession(f, 'sess-snap', '快照会话');
+  const sid = mvsId('a');
+  const f = fixture(mmx, [run('snap-run', 'completed')], { watched: false, sessionStorage: new Map([[SESSION_STATE_KEY, sid]]) });
   await f.tick();
   f.doc.querySelector('[data-act="history"]').dispatch('click'); await flush();
-  const stale = histPickOf(f);
+  const stale = f.doc.querySelector('[data-act="bindcurrent"]');
   assert.ok(stale);
   f.doc.querySelector('[data-act="mclose"]').dispatch('click');
   f.setRuns([]); await f.tick();
   stale.dispatch('click'); await flush();               // a row from the discarded snapshot
-  assert.equal(f.doc.querySelectorAll('.mmxdwf-srow').length, 0, 'a closed history modal must not keep resolving runs');
+  assert.equal(f.storage.get('mmxdwf-session-bindings'), undefined, 'a closed history modal must not keep resolving runs');
   assert.equal(f.doc.getElementById('mmxdwf-modal').style.display, 'none');
 });
 
@@ -1412,8 +1277,8 @@ test('MMX v9: teardown leaves no theme marker on the host document', async () =>
 });
 
 test('MMX v9: the internals seam exposes no session-binding mutator', async () => {
-  const f = fixture(mmx, [run('seam', 'running')]);
-  addSession(f, 'sess-seam', '接缝会话');
+  const sid = mvsId('a');
+  const f = fixture(mmx, [run('seam', 'running')], { sessionStorage: new Map([[SESSION_STATE_KEY, sid]]) });
   await f.tick();
   const internals = f.sandbox.__mmxDwfInternals;
   assert.equal(internals.bindRunToSession, undefined, 'page scripts must not be able to mint a binding through our global');
@@ -1422,17 +1287,16 @@ test('MMX v9: the internals seam exposes no session-binding mutator', async () =
   assert.equal(typeof internals.currentSessionId, 'function');
   assert.equal(typeof internals.bindingOf, 'function');
   // the user-driven path is untouched
-  f.doc.querySelector('[data-act="bindpick"]').dispatch('click'); await flush();
-  f.doc.querySelector('[data-act="bindpickrow"][data-sid="sess-seam"]').dispatch('click'); await flush();
-  assert.equal(JSON.parse(f.storage.get('mmxdwf-session-bindings'))['seam'].sessionId, 'sess-seam');
+  f.doc.querySelector('[data-act="bind"]').dispatch('click'); await flush();
+  assert.equal(JSON.parse(f.storage.get('mmxdwf-session-bindings'))['seam'].sessionId, sid);
   f.stop();
   assert.equal(f.sandbox.__mmxDwfInternals, undefined, 'teardown removes the seam');
 });
 
 test('MMX v9: the modal openers keep no dead view variable', () => {
   const src = readFileSync(mmx.path, 'utf8');
-  assert.doesNotMatch(src, /void view/, 'openSessionPicker kept a "void view" no-op for an unused binding');
-  for (const type of ['bindpick', 'agents', 'logs']) {
+  assert.doesNotMatch(src, /void view/, 'no opener may keep a "void view" no-op for an unused binding');
+  for (const type of ['agents', 'logs']) {
     assert.doesNotMatch(src, new RegExp("var view = beginView\\('" + type + "'"), type + ' records a view it never reads back');
   }
   for (const type of ['script', 'board', 'result', 'artifact', 'history']) {
@@ -1440,14 +1304,16 @@ test('MMX v9: the modal openers keep no dead view variable', () => {
   }
 });
 
-test('MMX v9: the card host carries no unreachable picker-row handler', () => {
+test('MMX: the client never reads or writes the host session list', () => {
   const src = readFileSync(mmx.path, 'utf8');
-  const start = src.indexOf('function onCardClick');
-  const end = src.indexOf('// ---------- modals');
-  assert.ok(start > 0 && end > start, 'the slice really covers onCardClick');
-  const onCardClick = src.slice(start, end);
-  assert.doesNotMatch(onCardClick, /act === 'bindpickrow'/,
-    'picker rows live in the modal, so the card host never sees their clicks and must not carry a second handler');
-  assert.match(src.slice(src.indexOf('function ensureModal')), /act === 'bindpickrow'/,
-    'the modal listener owns the picker rows');
+  assert.doesNotMatch(src, /data-session-id/, 'the session-list row attribute is never queried');
+  assert.doesNotMatch(src, /data-mmxdwf-line/, 'no progress line is injected anywhere');
+  assert.doesNotMatch(src, /bindpick/, 'the session picker and its rows are gone');
+  assert.deepEqual([...src.matchAll(/function (sweep\w+)\(/g)].map((m) => m[1]), ['sweepCard', 'sweepAll'],
+    'the conversation-card sweep and its one wrapper are all that is left');
+  assert.deepEqual([...new Set([...src.matchAll(/\bsweep[A-Z]\w*\(/g)].map((m) => m[0]))], ['sweepCard(', 'sweepAll('],
+    'no sweep helper other than the card sweep survives');
+  // the host's own current-session markers are still the only session source we read
+  assert.match(src, /data-shortcut-session-active="true"/);
+  assert.match(src, /mavis:activeSessionId/);
 });
