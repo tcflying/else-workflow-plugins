@@ -64,7 +64,7 @@ export function apply(ctx, config) {
   let runsByKey = new Map();
   let runsById = new Map();
   // SPEC §2.2: shared engine used by POST /resume.
-  const WF_PATH = 'G:/qoder-intl-project/else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs';
+  const WF_PATH = 'G:/mmx-project/zcode动态工作流-原else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs';
 
   const readProgress = (file) => {
     let mtime = 0;

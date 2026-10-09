@@ -14,7 +14,7 @@
 // Usage:
 //   node sidecar.mjs [--launch] [--root <dir>]... [--kill-on-exit]
 //     --launch        start MiniMax Code only when no existing instance must be replaced
-//     --root <dir>    workspace root to scan (repeatable); default G:/qoder-intl-project/else
+//     --root <dir>    workspace root to scan (repeatable); default G:/mmx-project/zcode动态工作流-原else
 //     --kill-on-exit  on SIGINT also kill the MiniMax Code instance this process launched
 import { createServer } from 'node:http';
 import { launchOwnedApplication, parseLaunchArgs } from './launch-policy.mjs';
@@ -29,10 +29,10 @@ import { processIdentity, resumeRun, sameStateIdentity } from './run-lifecycle.m
 export const API_PORT = 4231;              // fixed: never change, never drift
 export const CDP_PORT = 9331;              // fixed
 export const EXE = 'G:\\MiniMax\\MiniMax Code\\MiniMax Code.exe';
-const DEFAULT_ROOTS = ['G:/qoder-intl-project/else'];
+const DEFAULT_ROOTS = ['G:/mmx-project/zcode动态工作流-原else'];
 const CLIENT_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'client-inject.js');
 // SPEC §2.2: the shared dynamic-workflow engine (0.8.0) used by POST /resume.
-const WF_PATH = 'G:/qoder-intl-project/else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs';
+const WF_PATH = 'G:/mmx-project/zcode动态工作流-原else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs';
 
 
 const ts = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
@@ -51,12 +51,50 @@ export function newCapability() {
   return randomBytes(32).toString('hex');
 }
 
-export function buildInjectSource(source, capability) {
+// The bundle's API base is a SECOND placeholder, not the capability: an isolated instance binds
+// its own dynamic loopback port, and that port has to reach the injected bundle without editing
+// the shipped client. Production keeps API_PORT; only an explicit caller-supplied base moves it.
+export const API_BASE_PLACEHOLDER = '__MMXDWF_API_BASE__';
+export const DEFAULT_API_BASE = `http://127.0.0.1:${API_PORT}`;
+// Strict on purpose: plain http, exactly 127.0.0.1, an EXPLICIT port, nothing else. No host name
+// that could resolve elsewhere (localhost/::1), no credentials, no path, no query, no fragment —
+// the client concatenates relative paths ("API + '/runs'"), so any extra component would silently
+// address a different resource or leak into a request.
+const API_BASE_RE = /^http:\/\/127\.0\.0\.1:(\d{1,5})\/?$/;
+
+export function normalizeApiBase(value) {
+  const raw = (value === undefined || value === null || value === '') ? DEFAULT_API_BASE : String(value);
+  const matched = API_BASE_RE.exec(raw);
+  if (!matched) {
+    throw new Error('invalid workflow API base: must be exactly http://127.0.0.1:<port> — loopback http with an explicit port, no host name, credentials, path, query or fragment');
+  }
+  const port = Number(matched[1]);
+  if (!(port >= 1 && port <= 65535)) throw new Error('invalid workflow API base: port must be 1-65535');
+  return `http://127.0.0.1:${port}`;
+}
+
+export function buildInjectSource(source, capability, apiBase = DEFAULT_API_BASE) {
   if (!CAPABILITY_RE.test(String(capability || ''))) {
     throw new Error('invalid workflow capability: must match ' + CAPABILITY_RE);
   }
-  if (!String(source).includes(CAPABILITY_PLACEHOLDER)) return source;
-  return String(source).split(CAPABILITY_PLACEHOLDER).join(capability);
+  // The API base is validated UNCONDITIONALLY and substituted independently of the capability:
+  // the old early "no capability placeholder" return would have skipped the API substitution
+  // entirely, and an unsafe endpoint must be refused here rather than passed through.
+  const base = normalizeApiBase(apiBase);
+  let out = String(source);
+  if (out.includes(CAPABILITY_PLACEHOLDER)) out = out.split(CAPABILITY_PLACEHOLDER).join(capability);
+  if (out.includes(API_BASE_PLACEHOLDER)) out = out.split(API_BASE_PLACEHOLDER).join(base);
+  return out;
+}
+
+// The injected bundle must address the port THIS process actually bound (an isolated caller may
+// have asked for an ephemeral one), never a hardcoded literal. An injected test double that
+// exposes no server address falls back to the port that was requested.
+export function listeningPort(listening, requestedPort) {
+  const address = listening && typeof listening.address === 'function' ? listening.address() : null;
+  const port = address && Number.isInteger(address.port) ? address.port : requestedPort;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('cannot determine the host API listening port');
+  return port;
 }
 
 // Run identity helpers (self-contained; mirrored in dsh-workflow-pipeline/index.mjs).
@@ -666,10 +704,13 @@ function readClientScript(scriptPath) {
   return readFileSync(scriptPath, 'utf8');
 }
 
-export function startCdpInjector({ port = CDP_PORT, scriptPath = CLIENT_SCRIPT, capability, quiet = false, pollMs = 10000, retryMs = 5000, commandTimeoutMs = 3000, listTargets: listTargetsImpl = listTargets, connect = connectCdp } = {}) {
+export function startCdpInjector({ port = CDP_PORT, scriptPath = CLIENT_SCRIPT, capability, apiBase = DEFAULT_API_BASE, quiet = false, pollMs = 10000, retryMs = 5000, commandTimeoutMs = 3000, listTargets: listTargetsImpl = listTargets, connect = connectCdp } = {}) {
   if (!Number.isFinite(commandTimeoutMs) || commandTimeoutMs <= 0) throw new Error('invalid CDP timeout');
   const say = quiet ? () => {} : log;
   const cap = typeof capability === 'string' && capability ? capability : newCapability();
+  // Validated here, at start, so an unsafe API base fails before any target is contacted instead
+  // of at the first re-injection. It stays in memory like the capability and is never logged.
+  const apiEndpoint = normalizeApiBase(apiBase);
   const PRELUDE = 'try { if (typeof window.__mmxDwfTeardown === "function") window.__mmxDwfTeardown(); } catch (e) {}'
     + ' try { window.__mmxDwfInstalled = false; window.__mmxDwfVersion = 0; } catch (e) {}';
   let stopped = false, current = null, inFlight = null, stopPromise = null;
@@ -750,7 +791,7 @@ export function startCdpInjector({ port = CDP_PORT, scriptPath = CLIENT_SCRIPT, 
       if (stopped) return;
       await send(handle, 'Runtime.enable');
       if (stopped) return;
-      const source = buildInjectSource(readClientScript(scriptPath), cap);
+      const source = buildInjectSource(readClientScript(scriptPath), cap, apiEndpoint);
       // F20: marked BEFORE the send. From this line on the page may already be armed, and a
       // timeout or a dropped socket cannot prove otherwise — only the identifier can.
       handle.registrationSent = true;
@@ -865,21 +906,27 @@ export async function main(argv = process.argv.slice(2), operations = {}) {
   const api = (operations.createHostApi || createHostApi)({ roots: args.roots });
   const host = operations.process || process;
   let launched = null, injector;
+  let apiPort = args.apiPort;   // replaced by the port actually bound, once the API is listening
   try {
-    await api.start(args.apiPort);
+    const listening = await api.start(args.apiPort);
+    // The injected bundle is told the address THIS process actually listens on, so an isolated
+    // caller that bound a dynamic port gets a card wired to itself instead of a hardcoded 4231.
+    // Production binds API_PORT, so its startup line is unchanged.
+    apiPort = listeningPort(listening, args.apiPort);
+    const apiBase = normalizeApiBase(`http://127.0.0.1:${apiPort}`);
     const available = await (operations.isCdpUp || isCdpUp)(args.cdpPort);
     if (!available && args.noLaunch) throw new Error(`CDP_UNAVAILABLE: --no-launch requires an existing MiniMax Code CDP endpoint on ${args.cdpPort}.`);
     if (!available && args.launch) {
       launched = await (operations.launchMiniMaxCode || launchMiniMaxCode)({ port: args.cdpPort });
       await launched.waitReady();
     } else if (!available) warn(`CDP on ${args.cdpPort} is unavailable; UI injection is pending. No application was started or stopped.`);
-    injector = (operations.startCdpInjector || startCdpInjector)({ port: args.cdpPort, capability: api.capability });
+    injector = (operations.startCdpInjector || startCdpInjector)({ port: args.cdpPort, apiBase, capability: api.capability });
   } catch (error) {
     try { if (injector) await injector.stop(); } catch {}
     await api.close().catch(() => {});
     throw error;
   }
-  log(`API :${args.apiPort} | CDP :${args.cdpPort} | roots ${api.roots.join(', ')} | injector started, confirmation pending`);
+  log(`API :${apiPort} | CDP :${args.cdpPort} | roots ${api.roots.join(', ')} | injector started, confirmation pending`);
   let shutdownPromise;
   const shutdown = () => shutdownPromise ||= (async () => {
     host.removeListener('SIGINT', onSignal); host.removeListener('SIGTERM', onSignal);

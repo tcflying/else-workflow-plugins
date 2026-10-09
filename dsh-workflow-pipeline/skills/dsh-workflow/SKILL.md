@@ -40,7 +40,7 @@ never paraphrase one the user did not give, and never convert "no answer yet" in
 
 1. `<this skill dir>/../dynamic-workflow/runtime/wf.mjs` — the sibling skill in the same user
    skills root.
-2. `G:/qoder-intl-project/else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs` —
+2. `G:/mmx-project/zcode动态工作流-原else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs` —
    the source of record in the workspace.
 
 Then **verify it before launching anything**. `wf.mjs` exports `ENGINE_VERSION`, currently

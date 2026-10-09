@@ -8,7 +8,7 @@
 // but the deployed state is what decides it):
 //
 //   * scripts/relay.mjs:14  ENGINE_RESOLVED =
-//     'g:/qoder-intl-project/else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs'
+//     'g:/mmx-project/zcode动态工作流-原else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs'
 //     — the workspace engine, and `shouldAppendFlag` matches that whole path (case/separator
 //     insensitive), never a basename.
 //   * mmx-workflow-pipeline/skills/mmx-workflow/SKILL.md:52-56 — the only supported entry names
@@ -47,7 +47,7 @@ const skillText = readFileSync(SKILL_MD, 'utf8');
 const guidedEngine = (skillText.match(/[A-Za-z]:[\\/][^\s`]*wf\.mjs/) || [])[0];
 const preToolUse = (command, extra = {}) => ({
   hook_event_name: 'PreToolUse', tool_name: 'bash', session_id: 'sess-mm-w4',
-  cwd: 'G:/qoder-intl-project/else', tool_input: { command }, ...extra,
+  cwd: 'G:/mmx-project/zcode动态工作流-原else', tool_input: { command }, ...extra,
 });
 const flaggedCommand = async (command) => {
   const out = await handle(JSON.stringify(preToolUse(command)));

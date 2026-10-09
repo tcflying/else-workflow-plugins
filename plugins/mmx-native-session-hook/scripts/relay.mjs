@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto';
 
 // Exact engine of this workspace (REPAIR-024 boundary: only our own engine is ever modified).
-const ENGINE_RESOLVED = 'g:/qoder-intl-project/else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs';
+const ENGINE_RESOLVED = 'g:/mmx-project/zcode动态工作流-原else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs';
 
 const readStdin = async () => {
   const chunks = [];

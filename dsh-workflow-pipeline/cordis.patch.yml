@@ -6,6 +6,6 @@
       inject: [webServer]
       config:
         roots:
-          - G:/qoder-intl-project/else
+          - G:/mmx-project/zcode动态工作流-原else
           - G:/qoder-intl-project/dsh团队版
           - G:/zcode-project

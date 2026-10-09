@@ -16,6 +16,9 @@
 .zcode/
 .claude/
 
+# 测试运行产物（隔离实例截图/自测 debris）不入库
+**/test/artifacts/
+
 # 运行日志不入库（含历史 sidecar 日志）
 *.log
 

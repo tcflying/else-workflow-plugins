@@ -1,0 +1,32 @@
+# test/iso/process-compose.ui-isolation.yaml — supervision config for the ISOLATED sidecar wrapper.
+#
+# This file models exactly one process: mmx-ui-isolation, which is test/iso/iso-sidecar.mjs. It does
+# NOT launch MiniMax Code. The isolated app instance is started separately by
+# test/iso/launch-isolated.ps1, and that instance is the project lead's to stop.
+#
+# What is deliberately NOT here:
+#   * no restart policy block. Availability/restart keys are omitted rather than guessed, so the
+#     tool's own default (no restart) applies — this harness must never resurrect itself in a loop;
+#   * no fixed API port. The host API binds 127.0.0.1:0 and reports the real port in the manifest at
+#     mmx-workflow-pipeline/test/artifacts/ui-isolation/iso-sidecar.manifest.json. Production 4231 is
+#     never named here;
+#   * no dependency edges (--no-deps), no dotenv (--disable-dotenv), so nothing outside this repo can
+#     be pulled into the supervised process.
+#
+# Start (project lead, after checking `process-compose --help` for the exact flags on this machine):
+#   G:\process-control\bin\process-compose.exe --address 127.0.0.1 --port 19480 `
+#     --log-file "G:\mmx-project\zcode动态工作流-原else\mmx-workflow-pipeline\test\artifacts\ui-isolation\pc.log" `
+#     --log-no-color --ordered-shutdown up `
+#     --config "G:\mmx-project\zcode动态工作流-原else\mmx-workflow-pipeline\test\iso\process-compose.ui-isolation.yaml" `
+#     -t=false --disable-dotenv --no-deps mmx-ui-isolation
+#
+# --observe names the SAME launch report as --launch-state on purpose. It turns the live identity
+# gate on (test/iso/iso-observer.mjs), and the identity is re-observed before every attach. Without
+# it this process exits 2 with BACKEND_ISOLATION_UNPROVEN, which is the intended default: a flag in a
+# file is an assertion, and an assertion cannot prove which process is behind the port.
+version: "0.5"
+
+processes:
+  mmx-ui-isolation:
+    command: '"C:\Program Files\nodejs\node.exe" "G:\mmx-project\zcode动态工作流-原else\mmx-workflow-pipeline\test\iso\iso-sidecar.mjs" --cdp-port 19331 --root "G:\mmx-project\zcode动态工作流-原else\mmx-workflow-pipeline\test\artifacts\ui-isolation\fixtures" --manifest "G:\mmx-project\zcode动态工作流-原else\mmx-workflow-pipeline\test\artifacts\ui-isolation\iso-sidecar.manifest.json" --launch-state "G:\mmx-project\zcode动态工作流-原else\mmx-workflow-pipeline\test\artifacts\ui-isolation\launch-isolated.json" --observe "G:\mmx-project\zcode动态工作流-原else\mmx-workflow-pipeline\test\artifacts\ui-isolation\launch-isolated.json" --require-attach 60000'
+    working_dir: "G:\mmx-project\zcode动态工作流-原else"

@@ -53,7 +53,7 @@ Engine — this exact file in this workspace. Do **not** use an installed copy u
 `~/.minimax/skills/`; the native session hook and the attribution contract both key off this path:
 
 ```
-G:/qoder-intl-project/else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs
+G:/mmx-project/zcode动态工作流-原else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs
 ```
 
 `wf.mjs paths` prints every directory in play plus the engine version. Node 20+, zero dependencies.
@@ -71,6 +71,27 @@ G:/qoder-intl-project/else/plugins/dynamic-workflow/skills/dynamic-workflow/runt
 
    Expected: **`0.8.1`**. Anything else is a different engine contract — report the version you
    read and stop. Do not "work around" a version you did not expect.
+
+**UI readiness — a read-only pre-check, and a separate fact from the engine.** The card/board UI is
+not part of this engine: it is the sidecar's CDP-injected bundle rendering a run that this engine
+already wrote to disk. So "did the run work" and "will a card appear" are two independent questions
+and only the first one is this Skill's job.
+
+- **Read-only check.** The UI is ready only if a sidecar of this workspace is up on its own fixed
+  loopback API port (production `4231`) **and** its own injector log carries
+  `workflow renderer attached`. Read the sidecar's startup line and injector lines; that is the
+  whole check.
+- **Never make it ready yourself.** Do not start, restart, launch, kill or re-attach any sidecar or
+  host application; do not pass `--launch`; do not route anything through the official
+  `workflow_start`. This check observes, it never mutates.
+- **Loading this Skill starts no business run**, and this check does not start one either. It is
+  part of the pre-flight, not an implicit authorization (§0's token is still the only trigger).
+- **A UI that is not ready must not block the run.** If the user explicitly asked for a run, start
+  it and say plainly that no card will be visible. An engine-only run is a complete, legitimate
+  outcome — never stall, retry, or escalate the sidecar just to get a picture.
+- **Never announce visualization success from this check.** "侧边栏已就绪 / 卡片会显示 / UI 完成"
+  is not a claim you may make. This check proves at most that a sidecar attached; a rendered card is
+  proven only by a screenshot or a DOM probe taken from a real window. Silence is not success.
 
 Write the script to `<cwd>/.qoder/workflow-drafts/<label>.js`, then check it before anything else:
 
@@ -261,6 +282,11 @@ Read `out.json` and report `result` to the user. A result over 2000 characters i
 stdout — the run output carries `resultPreview`, `resultBytes` and a pointer, and the whole value
 lives in `out.json` (`wf.mjs result <runId>` prints it). Fetch the full value there; do not
 paraphrase the preview as if it were the answer.
+
+**Report the engine result and the UI state as two separate facts.** A run can complete with no card
+at all, and a card can be on screen while the engine is still parked — never merge them into a
+single "全链路完成 / end-to-end done" claim. When the UI was not attached (§1), say that explicitly
+in the same breath as the result, and do not let the absence of a card pass as a quiet success.
 
 Useful companions, all read-only unless stated:
 

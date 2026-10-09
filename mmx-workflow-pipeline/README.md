@@ -18,6 +18,7 @@ MiniMax Code 当前界面有“插件”入口，市场中可见“动态工作�
 - 不修改 `G:\MiniMax\`、app.asar 或宿主源码；〔历史〕2026-09-29/30 的 0.2.3→0.2.4 生命周期修复未修改 dynamic-workflow 引擎。
 - Node **>= 22**，仅 `node:` 内置模块、原生 `fetch`/`WebSocket`；零第三方依赖。
 - 生产 API 固定 `127.0.0.1:4231`，CDP 固定 `127.0.0.1:9331`，不漂移端口。
+- 注入 bundle 里的 API 基址是占位符 `__MMXDWF_API_BASE__`，由 sidecar 在注入时替换成**本进程实际监听的地址**：生产仍是 `http://127.0.0.1:4231`（默认不变），传入 `startCdpInjector({apiBase})` 时才可能不同，且只接受 `http://127.0.0.1:<显式端口>`——主机名、https、凭据、路径、query、fragment 一律拒绝。这是隔离实例能用自己的动态端口做 UI 验收的前提；不带参数调用行为与之前完全一致。
 - `sidecar.mjs` 扫描运行文件并提供 API，通过 CDP 向 `app://./archon` 注入 `client-inject.js`。
 - 引擎数据位于 `<workspace>/.qoder/workflow-runs/<runId>/`；`run-lifecycle.mjs` 处理进程身份和恢复握手。
 - 注入器使用 `Page.addScriptToEvaluateOnNewDocument` 和初始化时 `Runtime.evaluate`；断线 5 秒重试，10 秒检查 target。客户端通常每 2 秒更新一次。后台窗口可能受 Electron 节流影响，这不是实时性保证。
@@ -28,13 +29,29 @@ MiniMax Code 当前界面有“插件”入口，市场中可见“动态工作�
 
 先确认 `9331` 确实属于目标 MiniMax Code、`4231` 空闲；若已有健康 sidecar，直接复用，不要启动第二份。
 
-在本项目目录执行：
+在本项目目录执行（`--root` 与 `sidecar.mjs` 的 `DEFAULT_ROOTS` 同值，写出来只为显式）：
 
 ```bash
-node sidecar.mjs --root G:/qoder-intl-project/else
+node sidecar.mjs --root G:/mmx-project/zcode动态工作流-原else
 ```
 
 可重复 `--root <dir>`；扫描根本身及其下一层目录。**健康判断看 sidecar 自己的启动行**（`API :4231 | CDP :9331 | roots … | injector started, confirmation pending`）与注入器的 target 确认行，不要用裸 `curl` 探活：
+
+### 启动就绪契约（启动行 ≠ UI 就绪）
+
+| 事实 | 判据 | 不能据此推出 |
+| --- | --- | --- |
+| API 在听 | 启动行出现 `API :<port> | CDP :9331 | …` | 引擎有 run、UI 有卡片 |
+| 注入器已 attach | 注入器自己的 `workflow renderer attached` | 卡片已渲染、已刷新 |
+| 卡片真的在 | 真实窗口的截图或 DOM 探针 | —— |
+
+**引擎与 UI 是两件事，必须分开报。** 引擎 run 可以在 UI 完全缺席时正常完成；反过来 UI 在引擎还 park 着时也可能已有卡片。任何“全链路完成 / 可视化 OK”的结论都要求上面第三行那种直接证据——注入日志只是初始化证据，不代替 UI 验收。UI 未就绪时**照常**报引擎结果并明确写“UI 未 attach，卡片不会显示”，不得用沉默代替成功，也不得为了出卡片去启停 sidecar 或宿主。
+
+### 长驻方式：前台 `node` 不是生产形态
+
+`node sidecar.mjs` 是**前台长驻进程**：它随终端关闭而消失，并长期占着固定的 `4231`。因此**不用它启动实例**，它也不符合本项目"长驻服务一律经 ProcessCompose 托管"的规则。
+
+**长驻一律经 ProcessCompose 托管；生产用的受管配置尚未部署。** 〔更正〕早期版本此处写的"本仓库没有任何 ProcessCompose 配置"过宽，已撤回。现存的 `test/iso/process-compose.ui-isolation.yaml` 是**独立隔离测试用的托管配置**，不是生产形态：它只托管 `test/iso/iso-sidecar.mjs` 一个进程、不启动 MiniMax Code、host API 绑 `127.0.0.1:0` 并把真实端口写进 manifest、从不出现生产 `4231`、也不含 restart 策略。**该隔离配置尚未真实启动过**；启动前需由负责人核对本机实际使用的 ProcessCompose 控制面与 `--help` 参数——配置里的命令行是按 `G:\process-control\bin\process-compose.exe` 写的，与本机实际入口未必一致。同一时刻只允许一份 sidecar。
 
 ```bash
 curl -i http://127.0.0.1:4231/runs

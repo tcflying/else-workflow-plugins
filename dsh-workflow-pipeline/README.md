@@ -29,7 +29,7 @@ C:/Users/datoo/AppData/Roaming/dsh-desktop-dev/harness/profiles/web/node_modules
 
 活跃 home 与扫描根（`C:/Users/datoo/.dsh-zcode-dev/profiles/web`）：每根扫描自身及下一层项目。
 
-当前Cordis补丁扫描根：`G:/qoder-intl-project/else`、`G:/qoder-intl-project/dsh团队版`、`G:/zcode-project`，每根扫描自身及下一层项目。
+当前Cordis补丁扫描根：`G:/mmx-project/zcode动态工作流-原else`、`G:/qoder-intl-project/dsh团队版`、`G:/zcode-project`，每根扫描自身及下一层项目。
 
 这份目录是历史验收时的安装实例，不是对所有DSH版本的通用安装路径承诺。应走对应客户端原生插件发现机制，不另写宿主源码、workspace hook或第三方patch。
 
@@ -77,7 +77,7 @@ http://127.0.0.1:43130/dsh-workflow-pipeline/api/runs
 
 ## 验证
 
-在`G:/qoder-intl-project/else`运行：
+在`G:/mmx-project/zcode动态工作流-原else`运行：
 
 ```bash
 node --test dsh-workflow-pipeline/test/api.test.mjs dsh-workflow-pipeline/test/client-contract.test.mjs

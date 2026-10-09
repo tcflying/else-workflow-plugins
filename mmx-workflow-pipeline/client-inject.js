@@ -35,7 +35,11 @@
 	var MODAL_ID = 'mmxdwf-modal';
 	var ENTRY_ID = 'mmxdwf-global-entry';
 	var STYLE_ID = 'mmxdwf-pipeline-style';
-	var API = 'http://127.0.0.1:4231';
+	// API base placeholder (NOT the capability): sidecar.mjs substitutes the endpoint this
+	// sidecar actually listens on — production http://127.0.0.1:4231, or an isolated
+	// instance's own dynamic loopback port — and validates it before use. A host name that
+	// could resolve elsewhere, a path, a query or a fragment is refused outright.
+	var API = '__MMXDWF_API_BASE__';
 
 	// D1-measured selectors (docs/dom-probe.md, MMX-310-SESSION-MARKERS.md) ----
 	// Conversation scroll host. The home route (new conversation) is positively identified by

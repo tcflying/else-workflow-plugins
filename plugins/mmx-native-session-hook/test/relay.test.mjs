@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { buildHostSessionFlag, shouldAppendFlag, appendFlag, handle } from '../scripts/relay.mjs';
 
 const relay = fileURLToPath(new URL('../scripts/relay.mjs', import.meta.url));
-const ENGINE_CMD = 'node "G:/qoder-intl-project/else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs" run task.mjs --run-id demo';
+const ENGINE_CMD = 'node "G:/mmx-project/zcode动态工作流-原else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs" run task.mjs --run-id demo';
 const spawnRelay = (event) => new Promise((resolve, reject) => {
   const child = spawn(process.execPath, [relay], { stdio: ['pipe', 'pipe', 'pipe'] });
   let out = '', err = '';
@@ -17,7 +17,7 @@ const spawnRelay = (event) => new Promise((resolve, reject) => {
 });
 const preToolUse = (command, extra = {}) => ({
   hook_event_name: 'PreToolUse', tool_name: 'bash', session_id: 'sess-mm-1',
-  cwd: 'G:/qoder-intl-project/else', tool_input: { command }, ...extra,
+  cwd: 'G:/mmx-project/zcode动态工作流-原else', tool_input: { command }, ...extra,
 });
 
 test('matching engine run commands gain the exact native hook session flag', async () => {
@@ -57,7 +57,7 @@ test('flag helpers keep the contract local and reversible', () => {
 });
 
 // Regression: original four independent attribution-safety assertions, unchanged.
-const engine='G:/qoder-intl-project/else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs';
+const engine='G:/mmx-project/zcode动态工作流-原else/plugins/dynamic-workflow/skills/dynamic-workflow/runtime/wf.mjs';
 const sid='mvs_00000000000000000000000000000001';
 async function patched(command){const value=await handle(JSON.stringify({hook_event_name:'PreToolUse',tool_name:'bash',session_id:sid,tool_input:{command}}));return value?JSON.parse(value).hookSpecificOutput.updatedInput.command:null;}
 test('single supported engine invocation gets exact native attribution',async()=>{
