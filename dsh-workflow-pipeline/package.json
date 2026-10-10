@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-workflow-pipeline",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "private": true,
   "description": "ZCode-style live workflow progress for DSH: a sidebar progress line under each session title and an in-conversation run card, fed by the dynamic-workflow engine's progress.json.",
   "main": "index.mjs",
@@ -14,9 +14,7 @@
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "inject": [
-        "@deepseek-ai/dsh-client-runtime"
-      ],
+      "inject": [],
       "immediately": true,
       "platform": "web"
     }

@@ -2,9 +2,48 @@
 
 DSH 团队版的原生插件：通过 Cordis Host API 和 `window.__ModuleLoader__.load` 客户端模块，显示 ZCode 风格的工作流侧栏进度与对话区运行卡片。不修改 dsh-desktop 源码或 app.asar，零第三方依赖。
 
+## 兼容基线（2026-10-10 只读读码复核）
+
+目标宿主 = DSH Desktop 2.0.17 壳，内置 core `@deepseek-ai/dsh` **0.2.0-rc.2**，宿主只读代码位于
+`C:/Program Files/DSH Desktop/resources/app/node_modules/@deepseek-ai/`。
+
+**`package.json` 里没有注释是刻意的。** 宿主 `dsh-client-modules/lib/index.js:711` 用
+`JSON.parse(readFileSync(pkgPath, "utf8"))` 严格解析每个包的 manifest，任何注释都会让它抛错、
+整个包扫描失败。兼容基线因此记在这里和 `test/host-0.2.0-rc.2-contract.test.mjs` 的文件头，
+而不是写进 manifest。
+
+`dsh.client.inject` 从 `["@deepseek-ai/dsh-client-runtime"]` 改为 `[]`（2026-10-10）：
+
+- 旧目标 `@deepseek-ai/dsh-client-runtime` 在 0.2.0-rc.2 安装树里**已不存在**（模块系统已并入
+  `dsh-client-modules`），保留它是一条指向死包的图排序元数据。
+- 读码判定它**不会**让组合失败：`dsh-client-modules/lib/client.js:656-659` 的
+  `arriveGraphRow` 只在 `this.graphRows.get(packageName) !== void 0` 时才 await 依赖，
+  缺失目标被静默跳过。所以改成 `[]` 是**删除死引用**，不是修一个会崩的 bug。
+- `dsh-client-modules` 自身的 `package.json` 也正是 `"inject": []`，与本改动一致。
+- `inject` 本就只是图排序元数据：`client.js` 的 factory **零 `require` 调用**。
+
+**没有加 `dsh.manifestVersion`。** 全树 grep（`@deepseek-ai/**`、`app/lib`、`app/build`）
+`manifestVersion` **零命中** —— 0.2.0-rc.2 没有任何读取方，加它只是一个自说自话的字段。
+
+**0.2.0-rc.2 实机验证（2026-10-10）。** 无头 core（`DSH_HOME=<隔离home> node @deepseek-ai/dsh/lib/bin.js
+--profile webflow --host 127.0.0.1 --port <p> --no-open`）装载本插件后：webserver 就绪零错误、
+`GET /dsh-workflow-pipeline/api/runs`（带 token）**200** 且返回真实运行数据；真实浏览器打开 web UI 后
+`window.__ModuleLoader__` 待注册队列**为空**（全图注册成功）、本插件 factory **已物化**
+（`dwf-pipeline-style` 注入页面）。对话卡片未在无登录环境验证：新 home 无法登录，home 路由无
+`viewArea` 锚点，本插件按契约不猜、正确地不渲染任何表面。**部署通道（2.0.17 实测）**：profile
+bundle 必须声明 `dsh.bundle`（缺失即 `loadRecoveryFilteredProfile` 报错）；第三方 bundle 列表由
+`desktopBundleList` 归一为 `[...REQUIRED_BUNDLES, ...thirdParty]`（自定义 bundle 保留追加，默认组合
+不丢）；profile 依赖用 pnpm 装入 `<profile>/node_modules`。**生产部署（休眠）**：`~/.dsh/profiles/desktop`
+的安装副本已于 2026-10-10 从史前 0.2.6 同步为 0.2.7（五件套逐字节核验，原件备份于副本内
+`.bak-027-*`），profile manifest 依赖路径已从旧根改指新根；UI 半在原生 Ctrl+R 后生效，Host 半需一次
+Harness 重启（由用户择时，重启前生产行为零变化）。**诚实边界**：桌面壳在「全新 home + 未登录」的
+隔离环境里 renderer boot health 恒超时（与插件无关：无插件纯净 profile 同样超时，生产已登录壳每日
+正常），故壳内 GUI 终验需在生产壳重启后由用户目视；另本机出现数个 DSH 僵尸进程（内核态不可杀，
+重启自清）。
+
 **2026-10-05 只读复核。** 「当前版本」分栏标注，不再是一个混写的数字：
 
-- **源码**：工作区 `dsh-workflow-pipeline/package.json` 版本为 **0.2.6**（不是 0.2.4）。引擎 `ENGINE_VERSION = 0.8.1`。
+- **源码**：工作区 `dsh-workflow-pipeline/package.json` 版本为 **0.2.7**（0.2.6 见下方 2026-10-05 历史记录）。引擎 `ENGINE_VERSION = 0.8.1`。
 - **磁盘**：本机**存在**一份 0.2.6 安装副本，在 dev harness profile `C:/Users/datoo/AppData/Roaming/dsh-desktop-dev/harness/profiles/web/node_modules/@dsh-external/dsh-workflow-pipeline/`（`package.json` 版本读作 0.2.6）。2026-10-05 与工作区源逐件只读比对：`package.json`、`cordis.patch.yml` **一致**；`client.js`、`index.mjs`、`run-lifecycle.mjs` **不一致**（部署件 mtime 2026-10-01，工作区源已在本轮改动）。**所以“未部署”要按实例分开说：磁盘上有一份旧部署，活跃实例上没有。**
 - **运行状态（活跃实例）**：活跃 home 是 `C:/Users/datoo/.dsh-zcode-dev`，其 profile `web` **没有** `@dsh-external` 依赖（`node_modules/@dsh-external` 不存在），`cordis.patch.yml` 里也没有本插件条目 → **活跃实例未部署本插件**。该 profile 声明 `"patchReload": "live"`，即 patch 层改动需要一次原生重载才会生效，这也是下文“Host 更新要重启 Harness”的依据。
 - **运行状态（核心与壳）**：监听 `127.0.0.1:3188` 的进程跑的是 `C:/Users/datoo/.dsh-zcode-dev/runtime-dsh015/node_modules/@deepseek-ai/dsh/lib/bin.js web --host 127.0.0.1 --port 3188 --no-open`，该运行时锁定 `@deepseek-ai/dsh ^0.1.5-rc.2`，实装 **0.1.5-rc.2**。两个壳并存：`C:\Program Files\DSH Desktop` 的 `ProductVersion` 为 **2.0.13.0**，`C:\Users\datoo\AppData\Local\Programs\DSH Desktop` 为 **2.0.4.0**。**壳版本 ≠ core 版本；升级壳不等于 core 升级。**
