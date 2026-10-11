@@ -6,19 +6,24 @@ import { tmpdir } from 'node:os';
 import { join, parse, resolve } from 'node:path';
 import * as installer from '../install-skills.mjs';
 
+// The installer ships the dedicated `mmx-workflow` skill: a directory only counts as replaceable
+// when its SKILL.md frontmatter declares exactly that name (install-skills.mjs assertSkill /
+// SKILL_NAME), and every transient (lock, stage, backup) lives in a work root derived from the
+// skills root — a SIBLING of it, never inside the scanned tree. The fixture mirrors both rules.
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'workflow-deploy-test-'));
   const source = join(root, 'source'), destination = join(root, 'installed');
+  const workRoot = root + '-work';
   mkdirSync(join(source, 'runtime'), { recursive: true });
-  writeFileSync(join(source, 'SKILL.md'), '---\nname: dynamic-workflow\n---\nengine');
+  writeFileSync(join(source, 'SKILL.md'), `---\nname: ${installer.SKILL_NAME}\n---\nengine`);
   writeFileSync(join(source, 'runtime/wf.mjs'), "export const ENGINE_VERSION = '0.8.1';\n");
   writeFileSync(join(source, 'data.txt'), 'new complete data');
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  return { root, source, destination };
+  t.after(() => { rmSync(root, { recursive: true, force: true }); rmSync(workRoot, { recursive: true, force: true }); });
+  return { root, source, destination, workRoot };
 }
 function oldInstall(f) {
   mkdirSync(join(f.destination, 'runtime'), { recursive: true });
-  writeFileSync(join(f.destination, 'SKILL.md'), '---\nname: dynamic-workflow\n---\nold');
+  writeFileSync(join(f.destination, 'SKILL.md'), `---\nname: ${installer.SKILL_NAME}\n---\nold`);
   writeFileSync(join(f.destination, 'runtime/wf.mjs'), "export const ENGINE_VERSION = '0.7.1';\n");
   writeFileSync(join(f.destination, 'old.txt'), 'keep this old installation');
 }
@@ -60,10 +65,15 @@ test('installer refuses unrelated destination even with force', (t) => {
   assert.equal(readFileSync(join(f.destination, 'private.txt'), 'utf8'), 'unrelated');
 });
 test('installer rejects unsupported engine before creating destination', (t) => {
-  const f = fixture(t); writeFileSync(join(f.source, 'runtime/wf.mjs'), "const ENGINE_VERSION = '99.0.0';");
-  assert.throws(() => installer.installSkill(f), /unsupported|expected/i);
+  const f = fixture(t);
+  // The engine version is read from the configured engine (the workspace wf.mjs), not from the
+  // skill tree, so the fixture's unsupported engine must be handed over as that engine.
+  const engine = join(f.source, 'runtime/wf.mjs');
+  writeFileSync(engine, "const ENGINE_VERSION = '99.0.0';");
+  assert.throws(() => installer.installSkill({ ...f, engine }), /unsupported|expected/i);
   assert.equal(existsSync(f.destination), false);
   assert.deepEqual(readdirSync(f.root), ['source']);
+  assert.equal(existsSync(f.workRoot), false);
 });
 test('installer CLI validates unknown flags instead of ignoring them', () => {
   assert.throws(() => installer.parseInstallArgs(['--typo']), /unknown/i);
@@ -76,7 +86,9 @@ test('canonical destination preserves a basename immediately beneath a drive roo
 });
 test('an existing installation lock is reported and never removed or overwritten', (t) => {
   const f = fixture(t); oldInstall(f);
-  const lockPath = f.destination + '.install.lock';
+  // The lock lives in the work root (outside the scanned skills tree), named after the skill.
+  mkdirSync(f.workRoot);
+  const lockPath = join(f.workRoot, installer.SKILL_NAME + '.install.lock');
   const content = JSON.stringify({ pid: 424242, startedAt: '2001-02-03T04:05:06.000Z', exe: 'test-owner.exe' });
   writeFileSync(lockPath, content);
   assert.throws(() => installer.installSkill({ ...f, force: true }), (error) => {
@@ -92,24 +104,27 @@ test('an existing installation lock is reported and never removed or overwritten
 });
 test('installation lock records its owner and excludes a concurrent installer process', (t) => {
   const f = fixture(t);
+  const lockPath = join(f.workRoot, installer.SKILL_NAME + '.install.lock');
   let heldLock;
   installer.installSkill({ ...f, operations: { copy: (source, stage, options) => {
-    heldLock = readFileSync(f.destination + '.install.lock', 'utf8');
+    heldLock = readFileSync(lockPath, 'utf8');
     const owner = JSON.parse(heldLock);
     assert.equal(owner.pid, process.pid);
     assert.equal(owner.exe, process.execPath);
     assert.ok(Number.isFinite(Date.parse(owner.startedAt)));
     const entry = new URL('../install-skills.mjs', import.meta.url).href;
+    // A concurrent installer only collides when it derives the SAME work root, which the real CLI
+    // always does (workRootFor(skillsRoot)); the competitor is given the same one.
     const script = `import { installSkill } from ${JSON.stringify(entry)};
-      try { installSkill({ source: process.argv[1], destination: process.argv[2] }); process.exitCode = 2; }
+      try { installSkill({ source: process.argv[1], destination: process.argv[2], workRoot: process.argv[3] }); process.exitCode = 2; }
       catch (error) { console.log(error.code); process.exitCode = error.code === 'INSTALL_LOCKED' ? 0 : 3; }`;
-    const competing = spawnSync(process.execPath, ['--input-type=module', '-e', script, f.source, f.destination], { encoding: 'utf8', timeout: 15000 });
+    const competing = spawnSync(process.execPath, ['--input-type=module', '-e', script, f.source, f.destination, f.workRoot], { encoding: 'utf8', timeout: 15000 });
     assert.equal(competing.status, 0, competing.stdout + competing.stderr);
     assert.match(competing.stdout, /INSTALL_LOCKED/);
-    assert.equal(readFileSync(f.destination + '.install.lock', 'utf8'), heldLock);
+    assert.equal(readFileSync(lockPath, 'utf8'), heldLock);
     assert.equal(existsSync(f.destination), false);
     cpSync(source, stage, options);
   } } });
-  assert.equal(existsSync(f.destination + '.install.lock'), false);
+  assert.equal(existsSync(lockPath), false);
   assert.equal(readFileSync(join(f.destination, 'data.txt'), 'utf8'), 'new complete data');
 });
